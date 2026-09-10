@@ -1,62 +1,100 @@
-# Architecture and cost policy
+# Architecture
 
-Python 3.11+, asyncio, HTTPX, SQLite WAL, and a Rich/Typer terminal interface.
-Models run in provider datacenters; the Raspberry Pi only orchestrates requests.
-One worker owns a data directory through an OS file lock. Other CLI processes can
-read status and submit commands through SQLite. Separate data directories do not
-share budgets; use a single directory for all personal runs.
+Python 3.11+, asyncio, SQLite WAL, official Codex/Claude Code clients, Rich and Typer.
+The Pi orchestrates cloud models; it does not host model weights.
 
-## Round protocol
+## Components
 
-1. MB prepares a problem brief with constraints, assumptions, questions and success criteria.
-2. Independent RB specialists propose evidence-backed approaches.
-3. An RB synthesizer compares proposals, selects an approach, preserves dissent,
-   and writes the current business/action plan.
-4. Independent JB specialists attack evidence, economics and execution risks.
-5. A JB chair compares critiques and produces structured findings, a score,
-   blocking issues, a verdict, and the next RB prompt.
-6. Pending user questions/steering go to MB at the next round boundary. Steering
-   updates the brief and resets convergence tracking without deleting history.
+| Component | Responsibility |
+|---|---|
+| MB / Astra | Initial brief, questions about progress, owner steering |
+| RB specialists / Astra | Independent proposals covering market, economics and execution |
+| RB chair / Astra | Compare proposals, preserve dissent, synthesize the plan |
+| JB critics / Opus 5 | Independent attacks on evidence, economics and failure modes |
+| JB chair / Opus 5 | Compare critiques, emit validated review JSON and the next RB prompt |
+| Engine | Scheduling, checkpoints, stop conditions and controls |
+| Subscription limits | Shared MB/RB usage gate, independent JB gate, durable reset timestamps |
+| Store | Runs, prompts/responses, rounds, commands, events and limits |
+| CLI | Dashboard, owner mailbox, pause/resume/stop and exports |
 
-Every call has a stable task identity, immutable output, model ID, token counts,
-source metadata, and a conservative charge. Completed outputs are reused on resume.
-Prompts use a bounded current brief, previous plan/review and specialist outputs;
-full history remains on disk for inspection/export. Model text is untrusted data,
-and cannot execute shell commands or change budgets or credentials.
+Subagents are separate official-client invocations with distinct role prompts and
+contexts. The Python scheduler controls their count and concurrency; no hidden
+recursive model delegation is required. Chairs receive all specialist contributions
+within the configured context bound and explain the comparison.
 
-## Budget reservations
+## Protocol and memory
 
-Daily budgets apply globally to this data directory, in UTC; per-run budgets apply
-for the lifetime of a run. MB and RB both count as OpenAI. Reservations and settled
-charges count toward both caps. Daily exhaustion waits until midnight UTC; a request
-larger than the whole daily cap or remaining run budget pauses for intervention.
+1. MB converts the owner's problem into a research brief.
+2. RB specialists work independently on that brief and the last completed plan/review.
+3. RB compares their recommendations and writes a standalone plan.
+4. JB critics independently inspect the plan, optionally searching for contrary evidence.
+5. JB compares critiques and returns a schema-validated review.
+6. The plan, review and round number commit together in one SQLite transaction.
+7. Owner steering is handled by MB before the next round starts.
 
-Text-only input is conservatively bounded by UTF-8 bytes plus envelope allowance.
-Native OpenAI web search adds hidden context. Search calls therefore reserve the
-configured model's entire context window as input plus the maximum output and tool
-fees. This can require more than $27 of *available headroom per concurrent search*
-with the default price ceilings, even when the settled call is much cheaper.
-Lower concurrency reduces simultaneous reservations. Disabling web search removes
-that headroom requirement but also removes live retrieval; outputs are labeled accordingly.
+Review JSON contains score, verdict, strengths, blocking issues, next_prompt,
+human_tests and dissent. Malformed output cannot advance a round. Validation errors
+and temporary client failures have a bounded retry count; subscription exhaustion
+waits for reset independently of that retry count.
 
-Prices are explicit conservative ceilings, not a live invoice feed. Astra's defaults
-cover long-context rates and cache writes; Anthropic prompt caching is not requested.
-Output tokens include reasoning/thinking. Actual counts settle the reservation at
-the configured ceiling prices. Unexpected usage above a reservation pauses the run.
-Unknown outcomes retain the full reservation indefinitely. Retrying may incur another
-charge and requires a new reservation. Budget bookkeeping is deliberately conservative.
+Prompts allocate a bounded share of context to each component and visibly mark
+truncation. Full prompts and responses remain on disk. This bounded working memory
+is intentionally simpler than retrieval over an unlimited transcript; very long
+specialist outputs can be clipped before synthesis.
 
-Do not run other clients against the same spending allowance and assume this ledger
-sees them. Provider account controls remain the authority on account-wide spending.
+A separate MB mailbox task answers owner questions during research. It shares the
+RB provider semaphore, so questions wait if OpenAI capacity is occupied or exhausted.
+Steering is applied only at round boundaries to avoid changing an in-flight round.
 
-## Limits and interruption
+## Persistence and recovery
 
-Shared provider gates pace requests locally, observe request/token reset headers,
-and account for in-flight reservations before dispatching more agents. HTTP 429s
-with quota/spending errors pause; temporary 429/5xx errors use bounded backoff and
-Retry-After. Header resets and cooldowns persist across worker restarts.
+One process holds worker.lock for the entire data directory. Other processes can
+read snapshots and enqueue controls using SQLite. Use the same data directory
+everywhere; independent directories do not coordinate workers or quotas.
 
-SIGINT/SIGTERM, CLI pause/stop and elapsed-time limits cancel local work, preserving
-completed calls. A provider can finish an already-dispatched request after cancellation;
-its reserved charge is retained. One cannot promise exactly-once paid execution across
-a network failure without a provider-supported idempotency/retrieval contract.
+Each task has a stable identity incorporating round and brief revision. A completed
+response is cached before subsequent tasks start, and re-used after a restart.
+In-flight calls interrupted by cancellation or power loss are marked unknown.
+The provider may already have consumed usage, so exactly-once inference is not
+guaranteed across network/power failures. Unknown calls can be retried on resume.
+
+SIGINT, SIGTERM and owner controls cancel child work. Linux process groups and
+Windows process-tree termination keep local child clients from running detached.
+A remote provider may still finish an already-dispatched request.
+
+Each run stores a configuration snapshot. To change a paused run explicitly, use
+resume --config with a validated configuration. The elapsed-time deadline starts
+when the run is created and includes pauses and quota waits. Expired/finished runs
+are not automatically restarted; create a new run from the exported plan.
+
+## Stopping conditions
+
+Sustained approval requires a configured number of qualifying reviews, a minimum
+number of rounds under the current brief revision, sufficiently high scores, and
+no blocking issues. A score plateau or needs_human verdict pauses for owner input.
+Round/time exhaustion marks the run complete with the specific reason, regardless
+of quality. Brief steering starts a new convergence history without erasing old work.
+
+## Authentication and permissions
+
+Only official clients contact the model services. MarianaBot never reads, copies,
+exports or embeds login tokens. It checks login metadata through documented client
+interfaces. Child environments remove API-key and third-party billing overrides.
+
+Codex executes with explicit model, subscription-only login, read-only sandbox,
+ignored user config, and disabled shell, apps, plugins, hooks and built-in delegation.
+Claude uses safe/restricted mode, disabled customizations, empty MCP configuration,
+explicit model, and an empty tool list or WebSearch only. Fast mode is disabled.
+Model output is never passed to a shell.
+
+These controls reduce the clients' capabilities; they are not an independent OS
+security boundary against a compromised native client. Use a dedicated OS account
+and keep official clients updated. All prompts sent for research go to the respective
+provider; web search can transmit search queries.
+
+## Evidence quality
+
+Live search is available to both specialist teams by default. Chairs use supplied
+evidence. When retrieval is disabled, prompts say so. Exported citations are model
+claims about sources, not independently verified provenance. Human tests, dissent,
+and unresolved assumptions remain in the final report.
