@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "marianabot"
+version = "0.1.0"
+description = "Persistent, budget-aware research and adversarial review with three AI brains"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["httpx>=0.28,<0.29", "pydantic>=2.10,<3", "rich>=13.9,<15", "typer>=0.15,<1", "python-dotenv>=1.0,<2", "filelock>=3.16,<4"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3,<10", "pytest-asyncio>=0.25,<2", "ruff>=0.9,<1"]
+
+[project.scripts]
+mariana = "marianabot.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/marianabot"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
