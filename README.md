@@ -133,9 +133,8 @@ that could disprove the recommendation.
 - [Raspberry Pi deployment](docs/raspberry-pi.md)
 - [Validation and milestones](docs/validation.md)
 
-Live model testing is intentionally disabled for this development session at the
-owner's request. Offline tests exercise orchestration, interruption/resume, mailbox
-handling, stopping conditions, quota events, and subprocess protocol contracts.
-Account checks confirmed ChatGPT authentication and Astra availability in Codex,
-plus a Claude Pro login. Opus 5 inference and Raspberry Pi deployment remain to be
-verified on the target accounts and device.
+Offline tests exercise orchestration, interruption/resume, mailbox handling,
+stopping conditions, quota events and subprocess protocol contracts. Small live
+checks passed for both Astra and Opus 5 using the owner's subscription logins.
+A full live research run, real quota-reset cycle and Raspberry Pi deployment
+remain to be verified. See the validation record for exact scope and usage.

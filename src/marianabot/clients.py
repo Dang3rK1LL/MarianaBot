@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -117,9 +118,17 @@ async def capture(args: list[str], cwd: Path, timeout: float = 30) -> tuple[int,
 
 
 async def drain(stream):
-    # Read continuously without retaining private client diagnostic logs.
-    while await stream.read(8192):
-        pass
+    # Keep a small in-memory tail for startup errors; never write raw client logs.
+    tail = b""
+    while chunk := await stream.read(8192):
+        tail = (tail + chunk)[-4096:]
+    return tail.decode("utf-8", errors="replace")
+
+
+def diagnostic(text: str) -> str:
+    text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
+    text = re.sub(r"(?i)(sk-[a-z0-9_-]+|bearer\s+\S+|eyJ[a-zA-Z0-9_.-]{20,})", "[redacted]", text)
+    return text.strip()[-1000:]
 
 
 class CodexAccount:
@@ -211,6 +220,19 @@ async def claude_account(config: Config, cwd: Path) -> dict:
 
 def error_from(text: str) -> ClientError:
     lower = text.lower()
+    if any(
+        word in lower
+        for word in (
+            "billing_error",
+            "insufficient_quota",
+            "credit balance",
+            "payment required",
+            "spend cap",
+        )
+    ):
+        return ClientError(
+            "Provider billing or credit limit reached; review account settings before resuming"
+        )
     if any(
         word in lower
         for word in (
@@ -332,10 +354,10 @@ class NativeClient:
         failure = None
         total = 0
         try:
-            process.stdin.write(prompt.encode("utf-8"))
-            await process.stdin.drain()
-            process.stdin.close()
             async with asyncio.timeout(self.config.research.request_timeout_seconds):
+                process.stdin.write(prompt.encode("utf-8"))
+                await process.stdin.drain()
+                process.stdin.close()
                 while line := await process.stdout.readline():
                     total += len(line)
                     if total > MAX_CAPTURE:
@@ -398,8 +420,11 @@ class NativeClient:
                                     )
                 code = await process.wait()
                 if code or not result:
+                    details = diagnostic(await stderr_task)
                     raise failure or ClientError(
-                        "Client ended without a completed response", retryable=True
+                        "Client ended without a completed response"
+                        + (": " + details if details else ""),
+                        retryable=not bool(details),
                     )
                 if not result["text"].strip():
                     raise ClientError("Client returned an empty final response", retryable=True)

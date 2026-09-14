@@ -67,6 +67,7 @@ class Engine:
         self.deadline = run["created"] + self.config.research.max_hours * 3600
         self.log = log or (lambda _: None)
         self.shutdown = asyncio.Event()
+        self.mailbox_lock = asyncio.Lock()
         self.gates = {
             provider: asyncio.Semaphore(brain.concurrency)
             for provider, brain in (("openai", self.config.rb), ("anthropic", self.config.jb))
@@ -188,7 +189,7 @@ class Engine:
                     self.store.finish(call_id, "invalid")
                     error = ClientError("Judge output failed schema validation", retryable=True)
                 except ClientError as exc:
-                    self.store.finish(call_id, "limited" if exc.limited else "failed")
+                    self.store.finish(call_id, "limited" if exc.limited else "unknown")
                     error = exc
                 except BaseException:
                     self.store.finish(call_id, "unknown")
@@ -217,6 +218,10 @@ class Engine:
             await asyncio.gather(*tasks, return_exceptions=True)
 
     async def handle_commands(self, steering: bool):
+        async with self.mailbox_lock:
+            await self._handle_commands(steering)
+
+    async def _handle_commands(self, steering: bool):
         for command in self.store.commands(self.run_id):
             if command["answer"] is not None or (command["kind"] == "steer") != steering:
                 continue
@@ -251,6 +256,7 @@ class Engine:
         while True:
             self.check()
             await self.handle_commands(steering=True)
+            await self.handle_commands(steering=False)
             run = self.store.run(self.run_id)
             history = self.store.rounds(self.run_id)
             if history and history[-1]["revision"] == run["revision"]:
@@ -332,6 +338,7 @@ class Engine:
         self.store.recover()
         work = mailbox = None
         try:
+            self.check()
             await self.preflight()
             work = asyncio.create_task(self.research())
             mailbox = asyncio.create_task(self.mailbox())

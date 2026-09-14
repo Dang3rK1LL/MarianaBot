@@ -79,9 +79,10 @@ is retained for diagnostics. That estimate is **not a subscription charge**.
 ## Scope of verification
 
 Both installed client logins were checked without inference. Codex listed Astra
-and Claude reported a Pro plan. The owner explicitly requested no live model
-tests during development, so Opus access, generated research quality, native
-web-search behavior and a real exhaustion/reset cycle remain unverified.
+and Claude reported a Pro plan. Subsequently, the owner authorized a small live
+check and both Astra and Opus 5 returned the expected JSON. See validation.md for
+token usage. Full research quality, native web-search behavior and a real
+exhaustion/reset cycle remain unverified.
 
 Provider-side overage controls are necessary for the no-additional-spend intent.
 The wrapper cannot inspect every billing switch, guarantee a request fits the

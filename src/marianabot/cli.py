@@ -1,5 +1,6 @@
 import asyncio
 import signal
+import sys
 import time
 from pathlib import Path
 from typing import Annotated
@@ -25,6 +26,10 @@ app = typer.Typer(
     no_args_is_help=True,
     pretty_exceptions_enable=False,
 )
+# Windows redirected terminals can default to cp1250; render Unicode safely.
+for stream in (sys.stdout, sys.stderr):
+    if hasattr(stream, "reconfigure"):
+        stream.reconfigure(encoding="utf-8", errors="replace")
 console = Console()
 DataDir = Annotated[
     Path,

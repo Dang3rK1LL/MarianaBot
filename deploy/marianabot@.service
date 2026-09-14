@@ -1,0 +1,23 @@
+[Unit]
+Description=MarianaBot research run %i
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+WorkingDirectory=%h/MarianaBot
+ExecStart=%h/MarianaBot/.venv/bin/mariana resume %i --data-dir %h/.local/share/marianabot --plain
+Environment=PATH=%h/.local/bin:%h/MarianaBot/.venv/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONUTF8=1
+UMask=0077
+Restart=on-failure
+RestartSec=30
+RestartPreventExitStatus=2 3
+TimeoutStopSec=20
+KillMode=control-group
+
+[Install]
+WantedBy=default.target
