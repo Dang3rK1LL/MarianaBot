@@ -59,11 +59,13 @@ def stop_reason(rounds: list[dict], config: Config) -> str | None:
 
 
 class Engine:
-    def __init__(self, store: Store, run_id: str, log=None, clients=None):
+    def __init__(self, store: Store, run_id: str, log=None, clients=None, messages_only=False):
         self.store, self.run_id = store, run_id
         run = store.run(run_id)
         self.config = Config.model_validate_json(run["config"])
         self.demo = bool(run["demo"])
+        self.messages_only = messages_only
+        self.initial_control = run["control"]
         self.deadline = run["created"] + self.config.research.max_hours * 3600
         self.log = log or (lambda _: None)
         self.shutdown = asyncio.Event()
@@ -95,6 +97,8 @@ class Engine:
         if self.shutdown.is_set():
             raise Halt("paused", "Worker interrupted; resume to continue")
         control = self.store.run(self.run_id)["control"]
+        if self.messages_only and control == self.initial_control:
+            return
         if control:
             raise Halt("stopped" if control == "stop" else "paused", f"Owner requested {control}")
         if time.time() >= self.deadline:
@@ -166,7 +170,10 @@ class Engine:
         provider = "anthropic" if brain == "JB" else "openai"
         model = self.config.jb.model if brain == "JB" else self.config.rb.model
         actual_search = search and self.config.research.web_search
-        content = prompt(instruction, data, self.config.research.max_context_chars, actual_search)
+        max_chars = self.config.research.max_context_chars
+        if task == "mb-intake":
+            max_chars = max(max_chars, len(data["owner_problem"]) + 1000)
+        content = prompt(instruction, data, max_chars, actual_search)
         attempt = 0
         while True:
             async with self.gates[provider]:
@@ -232,6 +239,11 @@ class Engine:
                 "brief": run["brief"],
                 "latest_round": history[-1] if history else "No completed round yet",
                 "owner_message": command["text"],
+                "conversation": [
+                    {"role": m["role"], "text": m["text"]}
+                    for m in self.store.messages(self.run_id)[-8:]
+                    if m["role"] in ("you", "MB")
+                ],
             }
             instruction = MASTER_STEER if steering else MASTER_ANSWER
             answer = await self.call("MB", f"mb-command-{command['id']}", instruction, data)
@@ -253,6 +265,9 @@ class Engine:
                 "MB", "mb-intake", MASTER_INTAKE, {"owner_problem": run["problem"]}
             )
             self.store.update_run(self.run_id, brief=intake["text"])
+        self.store.message(
+            self.run_id, "intake", "MB", "Research brief", self.store.run(self.run_id)["brief"]
+        )
         while True:
             self.check()
             await self.handle_commands(steering=True)
@@ -297,6 +312,13 @@ class Engine:
                 SYNTHESIZE,
                 data | {"independent_proposals": [r["text"] for r in researchers]},
             )
+            self.store.message(
+                self.run_id,
+                prefix + "-plan",
+                "RB",
+                f"Round {number} · Research plan",
+                synthesis["text"],
+            )
             self.emit(f"Round {number} · JB court")
             judging = {
                 "problem": run["problem"],
@@ -327,11 +349,15 @@ class Engine:
             self.store.save_round(
                 self.run_id, number, run["revision"], synthesis["text"], chair["review"]
             )
+            self.store.publish_round(
+                self.run_id, number, run["revision"], synthesis["text"], chair["review"]
+            )
             self.emit(
                 f"Round {number} checkpoint · score {chair['review']['score']}/100 · {chair['review']['verdict']}"
             )
 
     async def run(self):
+        self.store.seed_chat(self.run_id)
         if self.store.run(self.run_id)["status"] in ("complete", "stopped"):
             return
         self.store.update_run(self.run_id, status="running", reason="")
@@ -378,3 +404,26 @@ class Engine:
                 if task:
                     with contextlib.suppress(asyncio.CancelledError, Halt, ClientError):
                         await task
+
+    async def respond(self):
+        """Answer queued questions without restarting paused or finished research."""
+        self.store.recover()
+        self.store.seed_chat(self.run_id)
+        try:
+            self.check()
+            await self.preflight()
+            await self.handle_commands(steering=False)
+        except (Halt, ClientError, OSError, ValueError) as exc:
+            message = (
+                str(exc)
+                if isinstance(exc, (Halt, ClientError))
+                else f"Local {type(exc).__name__}; inspect installation and configuration"
+            )
+            self.emit("MB reply interrupted: " + message)
+            self.store.message(
+                self.run_id,
+                f"reply-error-{time.time_ns()}",
+                "system",
+                "MB could not reply",
+                message + "\n\nUse /retry to try pending messages again.",
+            )

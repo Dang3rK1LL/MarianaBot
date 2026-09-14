@@ -41,6 +41,10 @@ class Store:
             CREATE TABLE IF NOT EXISTS events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL,
                 created REAL NOT NULL, text TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS chat_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL,
+                message_key TEXT NOT NULL, role TEXT NOT NULL, title TEXT NOT NULL,
+                text TEXT NOT NULL, created REAL NOT NULL, UNIQUE(run_id, message_key));
         """)
         self.db.commit()
 
@@ -58,15 +62,81 @@ class Store:
             raise
 
     def create_run(self, problem: str, config: Config, demo: bool = False) -> str:
-        if not problem.strip() or len(problem) > 20000:
-            raise ValueError("The problem must contain 1–20,000 characters")
+        if not problem.strip() or len(problem) > 100000:
+            raise ValueError("The problem must contain 1–100,000 characters")
         run_id = uuid.uuid4().hex[:12]
         with self.db:
             self.db.execute(
                 "INSERT INTO runs(id,problem,config,demo,created,status) VALUES(?,?,?,?,?,?)",
                 (run_id, problem, config.model_dump_json(), demo, time.time(), "ready"),
             )
+            self._message(run_id, "problem", "you", "Your problem", problem)
         return run_id
+
+    def message(self, run_id: str, key: str, role: str, title: str, text: str):
+        with self.db:
+            self._message(run_id, key, role, title, text)
+
+    def _message(self, run_id: str, key: str, role: str, title: str, text: str):
+        self.db.execute(
+            "INSERT OR IGNORE INTO chat_messages(run_id,message_key,role,title,text,created) VALUES(?,?,?,?,?,?)",
+            (run_id, key, role, title, text, time.time()),
+        )
+
+    def messages(self, run_id: str, after: int = 0) -> list[dict]:
+        return [
+            dict(r)
+            for r in self.db.execute(
+                "SELECT * FROM chat_messages WHERE run_id=? AND id>? ORDER BY id", (run_id, after)
+            )
+        ]
+
+    def seed_chat(self, run_id: str):
+        """Import existing checkpoints once; safe to reopen legacy CLI sessions."""
+        if self.messages(run_id):
+            return
+        run = self.run(run_id)
+        self.message(run_id, "problem", "you", "Your problem", run["problem"])
+        if run["brief"]:
+            self.message(run_id, "intake", "MB", "Research brief", run["brief"])
+        for row in self.rounds(run_id):
+            self.publish_round(run_id, row["number"], row["revision"], row["plan"], row["review"])
+        for command in self.commands(run_id):
+            self.message(
+                run_id, f"command-{command['id']}", "you", command["kind"], command["text"]
+            )
+            if command["answer"]:
+                self.message(run_id, f"answer-{command['id']}", "MB", "Reply", command["answer"])
+
+    def activity(self, run_id: str) -> list[dict]:
+        return [
+            dict(r)
+            for r in self.db.execute(
+                "SELECT brain,state,COUNT(*) AS count FROM calls WHERE run_id=? GROUP BY brain,state",
+                (run_id,),
+            )
+        ]
+
+    def publish_round(self, run_id: str, number: int, revision: int, plan: str, review: dict):
+        prefix = f"round-{number}-revision-{revision}"
+        self.message(run_id, prefix + "-plan", "RB", f"Round {number} · Research plan", plan)
+        sections = [f"**{review['score']}/100 · {review['verdict'].replace('_', ' ')}**"]
+        for key, label in (
+            ("strengths", "Strengths"),
+            ("blocking_issues", "Blocking issues"),
+            ("human_tests", "Tests for you"),
+            ("dissent", "Dissent"),
+        ):
+            if review.get(key):
+                sections.append("### " + label + "\n" + "\n".join(f"- {v}" for v in review[key]))
+        sections.append("### Next research prompt\n" + review["next_prompt"])
+        self.message(
+            run_id,
+            prefix + "-review",
+            "JB",
+            f"Round {number} · Critical review",
+            "\n\n".join(sections),
+        )
 
     def run(self, run_id: str) -> dict:
         row = self.db.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
@@ -156,7 +226,7 @@ class Store:
 
     def enqueue(self, run_id: str, kind: str, message: str) -> int:
         run = self.run(run_id)
-        if run["status"] in ("complete", "stopped"):
+        if kind == "steer" and run["status"] in ("complete", "stopped"):
             raise ValueError("This run is closed; create a new run using the exported plan")
         if kind not in ("ask", "steer") or not message.strip() or len(message) > 20000:
             raise ValueError("Commands must be ask/steer with 1–20,000 characters")
@@ -164,6 +234,13 @@ class Store:
             cur = self.db.execute(
                 "INSERT INTO commands(run_id,kind,text,created) VALUES(?,?,?,?)",
                 (run_id, kind, message, time.time()),
+            )
+            self._message(
+                run_id,
+                f"command-{cur.lastrowid}",
+                "you",
+                "Steering instruction" if kind == "steer" else "Message to MB",
+                message,
             )
         return cur.lastrowid
 
@@ -176,6 +253,13 @@ class Store:
     def answer(self, run_id: str, command: dict, answer: str):
         with self.transaction():
             self.db.execute("UPDATE commands SET answer=? WHERE id=?", (answer, command["id"]))
+            self._message(
+                run_id,
+                f"answer-{command['id']}",
+                "MB",
+                "Updated brief" if command["kind"] == "steer" else "Reply",
+                answer,
+            )
             if command["kind"] == "steer":
                 self.db.execute(
                     "UPDATE runs SET brief=?,revision=revision+1 WHERE id=?", (answer, run_id)

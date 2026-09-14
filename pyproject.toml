@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Persistent three-brain research through subscription-authenticated AI clients"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = ["pydantic>=2.10,<3", "rich>=13.9,<15", "typer>=0.15,<1", "filelock>=3.16,<4"]
+dependencies = ["pydantic>=2.10,<3", "rich>=14.2,<15", "typer>=0.15,<1", "filelock>=3.16,<4", "textual>=8.2.8,<9"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.3,<10", "pytest-asyncio>=0.25,<2", "ruff>=0.9,<1"]
