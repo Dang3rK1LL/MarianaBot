@@ -47,6 +47,8 @@ It makes **no network or model calls**. Use --plain for a scrolling log.
 
 ## Set up a real run
 
+For an existing Windows laptop installation, see the [short laptop guide](docs/laptop.md).
+
 Read [subscription setup](docs/subscriptions.md) first. API keys do not draw from
 Plus or Pro subscriptions. Extra usage and automatic credit purchases must be off
 in the provider accounts before enabling a live run.
