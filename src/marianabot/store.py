@@ -46,7 +46,14 @@ class Store:
                 message_key TEXT NOT NULL, role TEXT NOT NULL, title TEXT NOT NULL,
                 text TEXT NOT NULL, created REAL NOT NULL, UNIQUE(run_id, message_key));
         """)
-        self.db.commit()
+        # Additive migration for stores created before the interactive chat.
+        with self.transaction():
+            if "control_epoch" not in {
+                row[1] for row in self.db.execute("PRAGMA table_info(runs)")
+            }:
+                self.db.execute(
+                    "ALTER TABLE runs ADD COLUMN control_epoch INTEGER NOT NULL DEFAULT 0"
+                )
 
     def close(self):
         self.db.close()
@@ -156,6 +163,10 @@ class Store:
                 f"UPDATE runs SET {','.join(k + '=?' for k in changes)} WHERE id=?",
                 (*changes.values(), run_id),
             )
+            if "control" in changes:
+                self.db.execute(
+                    "UPDATE runs SET control_epoch=control_epoch+1 WHERE id=?", (run_id,)
+                )
 
     def event(self, run_id: str, message: str):
         with self.db:
@@ -244,10 +255,32 @@ class Store:
             )
         return cur.lastrowid
 
-    def commands(self, run_id: str) -> list[dict]:
+    def commands(self, run_id: str, *, pending_only: bool = False) -> list[dict]:
         return [
             dict(r)
-            for r in self.db.execute("SELECT * FROM commands WHERE run_id=? ORDER BY id", (run_id,))
+            for r in self.db.execute(
+                "SELECT * FROM commands WHERE run_id=?"
+                + (" AND answer IS NULL" if pending_only else "")
+                + " ORDER BY id",
+                (run_id,),
+            )
+        ]
+
+    def pending_questions(self, run_id: str) -> int:
+        return self.db.execute(
+            "SELECT COUNT(*) FROM commands WHERE run_id=? AND kind='ask' AND answer IS NULL",
+            (run_id,),
+        ).fetchone()[0]
+
+    def recent_dialogue(self, run_id: str) -> list[dict]:
+        return [
+            dict(row)
+            for row in reversed(
+                self.db.execute(
+                    "SELECT role,text FROM chat_messages WHERE run_id=? AND role IN ('you','MB') ORDER BY id DESC LIMIT 8",
+                    (run_id,),
+                ).fetchall()
+            )
         ]
 
     def answer(self, run_id: str, command: dict, answer: str):

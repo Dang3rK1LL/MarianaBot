@@ -2,8 +2,11 @@
 
 **Take a business problem below the surface.**
 
-MarianaBot is a personal CLI that runs a persistent conversation between a research
-team and an independent critical review team, with a master coordinator for you.
+MarianaBot is a terminal chat with a research team, an independent critical review
+team, and a master coordinator. Paste your business problem into its multiline
+editor; the teams work in the background while you ask questions and steer them.
+
+![MarianaBot terminal chat, showing the offline demo welcome screen](docs/assets/chat.png)
 
 ~~~text
                          YOU
@@ -30,7 +33,7 @@ Python 3.11 or newer:
 ~~~powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
-.\.venv\Scripts\python.exe -m marianabot demo
+.\.venv\Scripts\python.exe -m marianabot chat --demo
 ~~~
 
 On Linux/macOS:
@@ -38,12 +41,16 @@ On Linux/macOS:
 ~~~bash
 python3 -m venv .venv
 .venv/bin/python -m pip install -e ".[dev]"
-.venv/bin/mariana demo
+.venv/bin/mariana chat --demo
 ~~~
 
-The demo uses deterministic fixtures, performs two full research/review rounds, and
-exports a Markdown report and JSON history under .mariana/demo/exports/.
-It makes **no network or model calls**. Use --plain for a scrolling log.
+Type a problem and press Enter. The demo uses deterministic fixtures and performs
+two research/review rounds without network or model calls. It saves exports under
+.mariana/demo/exports/. For a noninteractive demonstration, use `mariana demo --plain`.
+
+On Windows, double-click **MarianaBot.cmd** after installation to open normal chat.
+From an activated environment, simply run **mariana**. Long pasted text stays
+editable; Enter sends, Alt+Enter or Ctrl+J inserts a newline. Drafts save locally.
 
 ## Set up a real run
 
@@ -56,8 +63,7 @@ in the provider accounts before enabling a live run.
 ~~~text
 mariana init
 mariana doctor
-mariana new --problem-file examples/problem.md
-mariana run RUN_ID
+mariana
 ~~~
 
 The first command creates a local mariana.toml. Set subscription.overage_disabled
@@ -76,22 +82,34 @@ MB and RB always share the same OpenAI gate.
 
 ## Stay in control
 
-Use a second terminal, with the same data directory:
+Type commands directly in the chat. Type `/` to see suggestions, use the arrow
+keys and Tab to choose one, or press F1 for help:
 
 ~~~text
-mariana watch RUN_ID
-mariana ask RUN_ID "What is the weakest assumption so far?"
-mariana messages RUN_ID
-mariana steer RUN_ID "Focus on Hungary and require a pilot below EUR 500."
-mariana pause RUN_ID
-mariana resume RUN_ID
-mariana stop RUN_ID
-mariana export RUN_ID
+/ask What is the weakest assumption so far?
+/steer Focus on Hungary and require a pilot below EUR 500.
+/pause
+/resume
+/sessions
+/usage
+/export
+/quit
 ~~~
 
-Questions go to MB while research runs. Steering updates the brief at the next
-round boundary and resets convergence tracking. Pause and stop are local controls
-that do not need a model response. Ctrl+C pauses and preserves checkpoints.
+Ordinary follow-up text also goes to MB. `/steer` updates the brief at the next
+round boundary and resets convergence tracking. `/pause` and `/stop` are local
+controls that do not need a model response. `/stop` permanently ends research.
+
+The app starts and manages its own hidden worker and agent processes. **Closing
+chat leaves research running**; reopen it to reconnect. Use `/pause` first to
+suspend research. Keep the laptop awake and online. Rebooting needs a manual
+`/resume`; completed calls are reused. `/new` opens another draft; one session can
+research at a time in each data directory. MB can answer questions about finished
+or paused runs without restarting research.
+
+`/load path` loads a UTF-8 problem file for editing, `/copy` copies the latest plan,
+and `/retry` retries unanswered MB messages. The original scriptable CLI remains
+available; see [CLI operations](docs/operations.md).
 
 ## What is persisted
 
@@ -104,6 +122,7 @@ Exports include:
 
 - report.md: current brief, latest completed plan, critical review and owner conversation.
 - history.json: full local run record, completed prompts and responses.
+- conversation.md: the saved chat transcript.
 - citations.md: model-cited URLs, explicitly labeled as unverified.
 
 Research data and logins are not pushed to GitHub. Local reports can contain your
@@ -136,7 +155,8 @@ that could disprove the recommendation.
 - [Validation and milestones](docs/validation.md)
 
 Offline tests exercise orchestration, interruption/resume, mailbox handling,
-stopping conditions, quota events and subprocess protocol contracts. Small live
+stopping conditions, quota events, subprocess protocol contracts, chat interaction,
+long pastes, draft recovery and detached worker reconnection. Small live
 checks passed for both Astra and Opus 5 using the owner's subscription logins.
 A full live research run, real quota-reset cycle and Raspberry Pi deployment
 remain to be verified. See the validation record for exact scope and usage.

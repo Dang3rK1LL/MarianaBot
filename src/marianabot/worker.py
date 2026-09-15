@@ -13,7 +13,7 @@ from pathlib import Path
 
 from filelock import FileLock, Timeout
 
-from marianabot.engine import Engine
+from marianabot.engine import Engine, Halt
 from marianabot.reports import export_run
 from marianabot.store import Store
 
@@ -22,7 +22,16 @@ def atomic_json(path: Path, data: dict):
     temporary = path.with_name(path.name + f".{uuid.uuid4().hex}.tmp")
     try:
         temporary.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        temporary.replace(path)
+        # Windows readers/virus scanners may briefly deny delete-sharing on the target.
+        # Keep the old complete file until replacement succeeds; never truncate it.
+        for attempt in range(8):
+            try:
+                temporary.replace(path)
+                break
+            except PermissionError:
+                if attempt == 7:
+                    raise
+                time.sleep(0.01 * (attempt + 1))
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -65,6 +74,22 @@ class WorkerManager:
             raise ValueError("A worker is starting. Try again in a moment.") from exc
         try:
             active = self.active()
+            if active and active.get("run_id") == run_id and not messages_only:
+                store = Store(self.directory)
+                try:
+                    cancelling = bool(store.run(run_id)["control"])
+                finally:
+                    store.close()
+                if cancelling:
+                    for _ in range(100):
+                        await asyncio.sleep(0.1)
+                        active = self.active()
+                        if not active:
+                            break
+                    if active:
+                        raise ValueError(
+                            "The worker is still pausing. Try /resume again after it exits."
+                        )
             if active:
                 if active.get("run_id") == run_id:
                     if not messages_only and active.get("mode") == "messages":
@@ -129,6 +154,10 @@ class WorkerManager:
             except OSError:
                 atomic_json(self.metadata, record | {"state": "failed"})
                 raise
+            except ValueError:
+                if process.poll() is not None:
+                    atomic_json(self.metadata, record | {"state": "failed"})
+                raise
         finally:
             launch_lock.release()
 
@@ -145,6 +174,8 @@ async def execute(store: Store, run_id: str, messages_only: bool):
                 engine.check()
                 await asyncio.sleep(0.25)
             await task
+        except Halt as exc:
+            store.event(run_id, "MB reply cancelled: " + str(exc))
         finally:
             if not task.done():
                 task.cancel()
@@ -174,10 +205,10 @@ def main():
             run = store.run(args.run_id)
             if not args.messages_only and run["status"] in ("complete", "stopped"):
                 raise ValueError("This research run is closed")
-            atomic_json(metadata, record | {"state": "running"})
             try:
                 if not args.messages_only:
                     store.update_run(args.run_id, control="")
+                atomic_json(metadata, record | {"state": "running"})
                 asyncio.run(execute(store, args.run_id, args.messages_only))
                 export_run(store, args.run_id, store.directory / "exports" / args.run_id)
             finally:

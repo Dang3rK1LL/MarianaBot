@@ -1,5 +1,9 @@
 # CLI operations
 
+For everyday use, run `mariana` or `mariana chat` to open interactive chat. On
+Windows, double-click `MarianaBot.cmd`. The [laptop guide](laptop.md) covers its
+slash commands. The commands below are the scriptable interface.
+
 Activate the virtual environment or use its full executable path. All commands
 accept --data-dir; always use the same path for the worker and control terminals.
 
@@ -7,7 +11,7 @@ accept --data-dir; always use the same path for the worker and control terminals
 
 A good initial brief names the decision, customers/geography, resources, constraints,
 time horizon and evidence already available. See examples/problem.md.
-The initial problem is limited to 20,000 characters. MB identifies missing
+The initial problem is limited to 100,000 characters. MB identifies missing
 information and working assumptions. Read its response with messages, then send
 clarifications with steer.
 
@@ -36,7 +40,9 @@ research agents, so it also waits during an OpenAI cooldown. Steering is a queue
 brief revision applied before the next round. Questions and responses are durable
 and included in exported reports.
 
-Pending questions on a paused run need a running worker to answer them.
+The chat interface starts an MB-only worker for questions on paused or finished
+runs. Shell `ask` only queues a question; open that session in chat and use
+`/retry` if no research worker is active.
 A pause for human evidence or a plateau requires new steering to make progress;
 simply resuming the unchanged brief reaches the same stopping condition.
 
@@ -49,7 +55,9 @@ mariana resume RUN_ID --config mariana.toml
 mariana stop RUN_ID
 ~~~
 
-Ctrl+C and SIGTERM pause. Stop permanently closes the run.
+Ctrl+C and SIGTERM pause a foreground `mariana run` worker. In interactive chat,
+use `/pause`; closing chat detaches and leaves its managed worker running.
+Stop permanently closes the research run.
 Completed or stopped runs remain exportable; start a new run from the plan to
 continue. Explicit reconfiguration keeps the original creation time, historical
 model records and completed checkpoints.

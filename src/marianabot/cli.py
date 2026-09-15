@@ -23,7 +23,8 @@ from marianabot.ui import dashboard
 
 app = typer.Typer(
     help="MarianaBot · Take a problem below the surface.",
-    no_args_is_help=True,
+    no_args_is_help=False,
+    invoke_without_command=True,
     pretty_exceptions_enable=False,
 )
 # Windows redirected terminals can default to cp1250; render Unicode safely.
@@ -36,6 +37,36 @@ DataDir = Annotated[
     typer.Option("--data-dir", help="Shared state directory; use the same path in every terminal."),
 ]
 DEFAULT_DATA = Path(".mariana")
+
+
+@app.callback()
+def main(ctx: typer.Context):
+    """Open interactive chat, or choose a command for scripting."""
+    if ctx.invoked_subcommand is None:
+        if not sys.stdin.isatty():
+            console.print(ctx.get_help())
+            return
+        chat()
+
+
+@app.command()
+def chat(
+    data_dir: DataDir = DEFAULT_DATA,
+    config: Path = Path("mariana.toml"),
+    demo: bool = False,
+    run_id: Annotated[str | None, typer.Option("--run")] = None,
+):
+    """Open the interactive conversation. --demo uses offline fixture responses."""
+    from marianabot.chat import MarianaChat
+
+    if demo and data_dir == DEFAULT_DATA:
+        data_dir = DEFAULT_DATA / "demo"
+    try:
+        result = MarianaChat(data_dir, config, demo=demo, run_id=run_id).run()
+        if result:
+            console.print(Text(result))
+    except (ValueError, OSError) as exc:
+        fail(exc)
 
 
 def config_at(path: Path, demo: bool = False) -> Config:

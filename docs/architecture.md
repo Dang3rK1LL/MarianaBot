@@ -1,5 +1,33 @@
 # Architecture
 
+## Interactive chat and managed workers
+
+`mariana` opens a Textual terminal conversation. The multiline composer supports
+long pastes, slash suggestions and keyboard navigation. SQLite `chat_messages`
+holds speaker-labeled messages with stable keys so resumed calls do not duplicate
+replies. Owner messages and MB answers are saved transactionally with the mailbox.
+Per-session drafts and the selected conversation live in local `chat-state.json`.
+
+Chat launches `python -m marianabot.worker` as a separate background process, with
+no visible client terminals. A launch lock serializes startup; the existing
+`worker.lock` remains the execution authority. The parent awaits a startup
+handshake asynchronously. `worker.json` identifies the session and process for
+reconnection; a stale PID alone never proves that a worker is active. Child client
+processes keep the existing cancellation and subscription-only behavior.
+
+Closing the UI does not terminate research. A fresh UI attaches through the same
+SQLite state and lock. Paused or completed runs can use a messages-only worker to
+answer questions, preserving the research status and deadline. One worker owns a
+data directory at a time, including MB-only work, so it shares the same quota
+state and concurrency gates. Startup after an OS reboot is manual on laptops.
+
+The chat polls activity summaries and new transcript messages. Large messages are
+expandable; full prompts and responses remain in exported history. UI exports use
+a separate snapshot folder to avoid colliding with automatic worker exports.
+Normal commands remain available for scripts and systemd deployment.
+
+## Research engine
+
 Python 3.11+, asyncio, SQLite WAL, official Codex/Claude Code clients, Rich and Typer.
 The Pi orchestrates cloud models; it does not host model weights.
 

@@ -1,0 +1,38 @@
+Screen { background: #091923; color: #e5f1f4; }
+#masthead { height: 3; padding: 0 2; background: #102631; align-vertical: middle; }
+#brand { width: 1fr; height: 3; content-align: left middle; }
+#masthead Button { min-width: 8; width: auto; height: 3; margin: 0; border: none; background: #102631; color: #a7bdc8; }
+#masthead Button:hover, #masthead Button:focus { background: #29424e; color: #e5f1f4; text-style: bold; }
+#status-line { height: 1; padding: 0 2; background: #102631; color: #79dac8; }
+#workspace { height: 1fr; }
+#conversation { width: 1fr; padding: 1 3; scrollbar-size: 1 1; }
+#rail { width: 31; border-left: solid #29424e; padding: 1 2; background: #0c202a; scrollbar-size: 1 1; }
+#brains, #quota, #activity { height: auto; margin-bottom: 2; color: #a7bdc8; }
+#brains { color: #79dac8; }
+#activity { color: #ecc38a; }
+.message { height: auto; margin-bottom: 2; }
+.speaker { height: auto; margin-bottom: 1; color: #79dac8; text-style: bold; }
+.you .speaker { color: #e5f1f4; }
+.jb .speaker { color: #ecc38a; }
+.system .speaker { color: #a7bdc8; }
+.system { border-left: solid #29424e; padding-left: 1; }
+Markdown { background: transparent; padding: 0; margin: 0; height: auto; }
+MarkdownH1, MarkdownH2, MarkdownH3 { margin-top: 1; margin-bottom: 1; padding: 0; border: none; color: #e5f1f4; text-style: bold; }
+Collapsible { background: transparent; padding: 0; margin-top: 1; border: none; }
+CollapsibleTitle { color: #79dac8; }
+#compose-box { height: auto; padding: 0 2; }
+#composer { height: 6; border: round #537d87; padding: 0 1; background: #102631; color: #e5f1f4; }
+#composer:focus { border: round #79dac8; }
+#suggestions { display: none; height: auto; max-height: 6; background: #102631; border: solid #29424e; padding: 0; }
+#suggestions > .option-list--option-highlighted { background: #29424e; color: #e5f1f4; }
+#input-tools { height: 3; align-vertical: middle; }
+#input-hint { width: 1fr; height: 3; content-align: left middle; color: #a7bdc8; }
+#send { height: 3; min-width: 10; background: #79dac8; color: #091923; border: none; text-style: bold; }
+#send:hover, #send:focus { background: #b2f0e3; }
+Footer { background: #102631; color: #a7bdc8; }
+ModalScreen { align: center middle; background: #091923 80%; }
+#dialog { width: 86; max-width: 94%; height: 85%; padding: 1 2; background: #102631; border: round #79dac8; }
+#dialog VerticalScroll { height: 1fr; }
+#dialog Button { margin-top: 1; }
+.dialog-title { color: #79dac8; text-style: bold; margin-bottom: 1; }
+#session-list { height: 1fr; margin-top: 1; background: #091923; }

@@ -65,7 +65,7 @@ class Engine:
         self.config = Config.model_validate_json(run["config"])
         self.demo = bool(run["demo"])
         self.messages_only = messages_only
-        self.initial_control = run["control"]
+        self.initial_control_epoch = run["control_epoch"]
         self.deadline = run["created"] + self.config.research.max_hours * 3600
         self.log = log or (lambda _: None)
         self.shutdown = asyncio.Event()
@@ -96,8 +96,9 @@ class Engine:
     def check(self):
         if self.shutdown.is_set():
             raise Halt("paused", "Worker interrupted; resume to continue")
-        control = self.store.run(self.run_id)["control"]
-        if self.messages_only and control == self.initial_control:
+        run = self.store.run(self.run_id)
+        control = run["control"]
+        if self.messages_only and run["control_epoch"] == self.initial_control_epoch:
             return
         if control:
             raise Halt("stopped" if control == "stop" else "paused", f"Owner requested {control}")
@@ -173,6 +174,8 @@ class Engine:
         max_chars = self.config.research.max_context_chars
         if task == "mb-intake":
             max_chars = max(max_chars, len(data["owner_problem"]) + 1000)
+        elif task.startswith("mb-command-"):
+            max_chars = max(max_chars, len(data["owner_message"]) * len(data) + 1000)
         content = prompt(instruction, data, max_chars, actual_search)
         attempt = 0
         while True:
@@ -229,7 +232,7 @@ class Engine:
             await self._handle_commands(steering)
 
     async def _handle_commands(self, steering: bool):
-        for command in self.store.commands(self.run_id):
+        for command in self.store.commands(self.run_id, pending_only=True):
             if command["answer"] is not None or (command["kind"] == "steer") != steering:
                 continue
             run = self.store.run(self.run_id)
@@ -239,11 +242,7 @@ class Engine:
                 "brief": run["brief"],
                 "latest_round": history[-1] if history else "No completed round yet",
                 "owner_message": command["text"],
-                "conversation": [
-                    {"role": m["role"], "text": m["text"]}
-                    for m in self.store.messages(self.run_id)[-8:]
-                    if m["role"] in ("you", "MB")
-                ],
+                "conversation": self.store.recent_dialogue(self.run_id),
             }
             instruction = MASTER_STEER if steering else MASTER_ANSWER
             answer = await self.call("MB", f"mb-command-{command['id']}", instruction, data)

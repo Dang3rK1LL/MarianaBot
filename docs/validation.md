@@ -7,7 +7,7 @@ Validated on 2026-09-10.
 
 ## Offline validation
 
-Final local result: **29 tests passed**, Ruff lint/format checks passed, dependency
+Original engine milestone: **29 tests passed**, Ruff lint/format checks passed, dependency
 consistency passed, and an installable Python wheel built successfully.
 
 The offline suite also exercises the dashboard under a legacy Windows output
@@ -31,6 +31,8 @@ GitHub Actions runs the offline suite and demo on Windows/Ubuntu with Python
 3.11/3.13. It does not have model credentials or execute live smoke tests.
 
 ## Live smoke check
+
+See the separate chat validation record below for the interface update.
 
 The owner authorized a small connectivity test, including possible usage-credit
 consumption. Web search was disabled and both models used low effort.
@@ -74,4 +76,38 @@ findings and resolved blockers, not just the judge's score.
 3. Resilience improvements, live smoke verification, operations, Pi service and CI:
    recorded by the final implementation commit.
 
+4. Durable chat history and managed background workers: 0972831.
+5. Interactive terminal chat, laptop launcher, visual review and interaction tests:
+   recorded by the chat implementation commit.
+
 Each milestone is committed and pushed to the configured GitHub repository.
+
+## Interactive chat milestone · 2026-09-15
+
+Local result: **44 offline tests passed**. Ruff lint/format, the CLI demo and
+dependency consistency checks passed. An installable wheel includes the terminal
+stylesheet and managed worker.
+
+The chat update adds a Textual interface, multiline paste, slash suggestions,
+session browsing, persistent drafts/transcripts, a Windows launcher, and detached
+research and MB-only workers. Existing subscription settings and native client
+restrictions are retained. No additional live model calls were used to test the UI.
+
+Offline validation covers:
+
+- A 30,000-character paste remaining editable until Enter, and a problem over
+  80,000 characters reaching MB's intake without losing its final constraint.
+- Slash steering, normal MB questions, file loading, exports and invalid-command recovery.
+- Keyboard completion, multiline editing, modal navigation, 80-column layout and resizing.
+- Restored drafts and saved conversations after closing and reopening chat.
+- Typing while a worker is starting, detached completion, and MB replies on finished runs.
+- Research continuing after its launcher OS process exits.
+- Shared worker locking, repeated pause requests and cancellation without reopening research.
+- Windows metadata replacement retry after a transient file-sharing violation.
+
+Color screenshots were rendered and reviewed at 120×40 and 80×24, including the
+welcome screen, command suggestions, help and a completed demo conversation.
+`scripts/capture_chat.py` recreates the offline review artifacts; optional
+`resvg-py` renders PNGs. It is not a runtime dependency. The README screenshot
+contains demo content only. Ruff, the full offline suite, the original CLI demo,
+dependency consistency and wheel packaging are checked for this milestone.

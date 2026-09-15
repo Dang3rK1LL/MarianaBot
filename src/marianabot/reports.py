@@ -68,10 +68,21 @@ def export_run(store: Store, run_id: str, target: Path) -> Path:
     atomic_text(
         target / "history.json",
         json.dumps(
-            {"run": run, "rounds": rounds, "commands": commands, "calls": calls},
+            {
+                "run": run,
+                "rounds": rounds,
+                "commands": commands,
+                "calls": calls,
+                "conversation": store.messages(run_id),
+            },
             ensure_ascii=False,
             indent=2,
         )
+        + "\n",
+    )
+    atomic_text(
+        target / "conversation.md",
+        "\n\n".join(f"## {m['role']} · {m['title']}\n\n{m['text']}" for m in store.messages(run_id))
         + "\n",
     )
     urls = {}
