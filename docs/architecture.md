@@ -26,6 +26,13 @@ expandable; full prompts and responses remain in exported history. UI exports us
 a separate snapshot folder to avoid colliding with automatic worker exports.
 Normal commands remain available for scripts and systemd deployment.
 
+The fixed usage strip reads small SQLite `call_usage` aggregates every 0.75 seconds.
+Native client events upsert per-invocation counters while calls are running; final
+reports replace partial reports. Token accounting includes interrupted attempts
+and avoids cached-input and repeated-stream double counting. A separate worker
+task refreshes Codex account quotas every 60 seconds, serialized with dispatch
+checks. Claude allowance reports remain event-driven. See [usage reporting](usage.md).
+
 ## Research engine
 
 Python 3.11+, asyncio, SQLite WAL, official Codex/Claude Code clients, Rich and Typer.

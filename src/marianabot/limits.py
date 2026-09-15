@@ -44,6 +44,8 @@ class SubscriptionLimits:
                         "name": f"{bucket.get('limitId', 'codex')} {name}",
                         "percent": used,
                         "reset": reset,
+                        "duration_minutes": finite(window.get("windowDurationMins")),
+                        "observed": now,
                     }
                 )
                 if used >= self.config.pause_at_percent:
@@ -75,6 +77,7 @@ class SubscriptionLimits:
             "percent": percent,
             "reset": reset,
             "status": info.get("status", "unknown"),
+            "observed": now,
         }
         windows = {w["name"]: w for w in self.data.get("windows", [])}
         windows[window["name"]] = window

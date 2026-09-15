@@ -73,6 +73,7 @@ def export_run(store: Store, run_id: str, target: Path) -> Path:
                 "rounds": rounds,
                 "commands": commands,
                 "calls": calls,
+                "reported_usage": store.usage_totals(run_id),
                 "conversation": store.messages(run_id),
             },
             ensure_ascii=False,

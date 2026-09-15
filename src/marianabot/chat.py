@@ -23,6 +23,7 @@ from textual.widgets.option_list import Option
 from marianabot.config import Config, load_config
 from marianabot.reports import export_run
 from marianabot.store import Store
+from marianabot.usage_ui import UsageStrip
 from marianabot.worker import WorkerManager, atomic_json
 
 COMMANDS = {
@@ -226,9 +227,9 @@ class MarianaChat(App):
     ENABLE_COMMAND_PALETTE = False
     BINDINGS = [
         Binding("f1", "help", "Help", priority=True),
-        Binding("ctrl+n", "new", "New", priority=True),
-        Binding("ctrl+o", "sessions", "Sessions", priority=True),
-        Binding("ctrl+l", "compose", "Write", priority=True),
+        Binding("ctrl+n", "new", "New", priority=True, show=False),
+        Binding("ctrl+o", "sessions", "Sessions", priority=True, show=False),
+        Binding("ctrl+l", "compose", "Write", priority=True, show=False),
         Binding("ctrl+end", "latest", "Latest", priority=True),
         Binding("ctrl+q", "detach", "Quit", priority=True),
     ]
@@ -262,27 +263,23 @@ class MarianaChat(App):
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="masthead"):
-            yield Static("[b]MARIANA[/b]  [#79dac8]↓[/]  research in depth", id="brand")
+            yield Static("MarianaBot", id="brand")
             yield Button("New", id="new")
             yield Button("Sessions", id="sessions")
             yield Button("Help", id="help")
         yield Static("", id="status-line", markup=False)
-        with Horizontal(id="workspace"):
-            yield VerticalScroll(id="conversation")
-            with VerticalScroll(id="rail"):
-                yield Static("", id="brains", markup=False)
-                yield Static("", id="quota", markup=False)
-                yield Static("", id="activity", markup=False)
+        yield VerticalScroll(id="conversation")
+        yield UsageStrip(id="usage-strip")
         with Vertical(id="compose-box"):
             yield OptionList(id="suggestions", markup=False)
             yield Composer(
                 id="composer",
-                placeholder="Describe your business problem, or type / for commands…",
+                placeholder="Describe your business problem…",
                 highlight_cursor_line=False,
             )
             with Horizontal(id="input-tools"):
                 yield Static("Enter send · Alt+Enter newline · / commands", id="input-hint")
-                yield Button("Send ↵", id="send", variant="primary")
+                yield Button("Send ↵", id="send")
         yield Footer()
 
     async def on_mount(self):
@@ -309,24 +306,24 @@ class MarianaChat(App):
             self.call_after_refresh(self.resize_layout)
 
     def resize_layout(self):
-        self.chat_screen.query_one("#rail").display = self.size.width >= 100
-        self.chat_screen.query_one("#composer").styles.height = 6 if self.size.height >= 32 else 4
+        editor = self.chat_screen.query_one(Composer)
+        maximum = 8 if self.size.height >= 32 else 5
+        editor.styles.height = min(maximum, max(3, editor.wrapped_document.height + 2))
+        self.chat_screen.query_one("#suggestions").styles.max_height = (
+            6 if self.size.height >= 32 else 3
+        )
 
     async def welcome(self):
-        self.chat_screen.query_one(
-            Composer
-        ).placeholder = "Describe your business problem, or type / for commands…"
+        self.chat_screen.query_one(Composer).placeholder = "Describe your business problem…"
         await self.chat_screen.query_one("#conversation").remove_children()
-        mode = (
-            "**Offline demo · no model calls.**"
-            if self.demo
-            else "**Your research team is ready.**"
-        )
-        await self.add_card(
-            "Mariana",
-            "Take a problem below the surface",
-            mode
-            + "\n\nTell me what you want to build, decide or investigate. Paste as much context as you need, then press **Enter**.\n\n**MB** frames the problem → **RB** builds the plan ⇄ **JB** challenges it.\n\nTry: *I want to launch a service for local businesses. I have €2,000, 10 hours a week, and need a plan I can test in 30 days.*\n\nType **/** to explore commands. **F1** opens the guide.",
+        await self.chat_screen.query_one("#conversation").mount(
+            Static("What are you working on?", id="welcome-title"),
+            Static(
+                "Describe the decision, business idea or problem.\n"
+                "Add your constraints and what a useful result would look like.\n\n"
+                "Paste a long brief here, or use /load to open a text file.",
+                id="welcome-copy",
+            ),
         )
 
     async def add_card(self, role: str, title: str, text: str):
@@ -417,8 +414,10 @@ class MarianaChat(App):
         options.display = bool(self.matches)
         limit = 20000 if self.run_id else 100000
         self.chat_screen.query_one("#input-hint", Static).update(
-            f"Enter send · Alt+Enter newline · {len(value):,}/{limit:,}"
+            "Enter send · Alt+Enter newline · "
+            + (f"{len(value):,}/{limit:,}" if value else "/ commands")
         )
+        self.call_after_refresh(self.resize_layout)
 
     def complete_command(self):
         options = self.chat_screen.query_one("#suggestions", OptionList)
@@ -699,15 +698,31 @@ class MarianaChat(App):
         if not self.is_running or self.exiting:
             return
         active = self.manager.active()
-        mode = "OFFLINE DEMO" if self.demo else "SUBSCRIPTION"
-        status = "new conversation"
-        brain_lines = ["THE RESEARCH TEAM", "", "MB → RB ⇄ JB", ""]
+        usage_run = active.get("run_id") if active else None
+        usage_run = usage_run or self.run_id
+        usage_demo = bool(self.store.run(usage_run)["demo"]) if usage_run else self.demo
+        scope = (
+            "This run"
+            if usage_run == self.run_id and usage_run
+            else f"Working run {usage_run}"
+            if usage_run
+            else "Usage"
+        )
+        self.chat_screen.query_one(UsageStrip).update_usage(
+            self.store.usage_totals(usage_run) if usage_run else {},
+            {provider: self.store.get_limits(provider) for provider in ("openai", "anthropic")},
+            scope=scope,
+            demo=usage_demo,
+            working=bool(active and active.get("run_id") == usage_run),
+        )
+        mode = "Offline demo" if self.demo else "Subscriptions"
+        status = "New conversation"
         if self.run_id:
             run = self.store.run(self.run_id)
-            status = f"{run['status']} · round {run['round']} · {self.run_id}"
+            status = f"{run['status'].capitalize()} · round {run['round']}"
             attached = active and active.get("run_id") == self.run_id
             if run["status"] == "running" and not attached:
-                status = f"worker disconnected · /resume · {self.run_id}"
+                status = "Worker disconnected · /resume to reconnect"
             pending = self.store.pending_questions(self.run_id)
             if pending:
                 status += f" · {pending} MB pending"
@@ -733,7 +748,12 @@ class MarianaChat(App):
                     if not self.is_running or self.exiting:
                         return
             activity = self.store.activity(self.run_id)
-            for brain, label in (("MB", "Master"), ("RB", "Research"), ("JB", "Judge")):
+            busy = []
+            for brain, label in (
+                ("MB", "MB replying"),
+                ("RB", "RB researching"),
+                ("JB", "JB reviewing"),
+            ):
                 working = (
                     sum(
                         a["count"]
@@ -743,34 +763,14 @@ class MarianaChat(App):
                     if attached
                     else 0
                 )
-                done = sum(
-                    a["count"] for a in activity if a["brain"] == brain and a["state"] == "done"
-                )
-                brain_lines += [
-                    f"{brain}  {label}",
-                    f"{'Working · ' + str(working) + ' agent(s)' if working else 'Ready' if attached else 'Idle'} · {done} saved",
-                    "",
-                ]
-            events = self.store.events(self.run_id, 3)
-            self.chat_screen.query_one("#activity", Static).update(
-                "LATEST ACTIVITY\n\n" + "\n\n".join(friendly_event(e["text"]) for e in events)
-            )
+                if working:
+                    busy.append(label + (f" ({working})" if working > 1 else ""))
+            if busy:
+                status += " · " + " · ".join(busy)
         else:
-            brain_lines += [
-                "MB  Frames your problem",
-                "RB  Builds the plan",
-                "JB  Tests the reasoning",
-                "",
-                "Type a problem to begin.",
-            ]
-            self.chat_screen.query_one("#activity", Static).update(
-                "/steer  Change direction\n/pause  Take a break\n/export Save the plan"
-            )
             if active:
                 status += " · another session working · /sessions"
-        self.chat_screen.query_one("#status-line", Static).update(f"{mode}  ·  {status}")
-        self.chat_screen.query_one("#brains", Static).update("\n".join(brain_lines))
-        self.chat_screen.query_one("#quota", Static).update("USAGE\n\n" + self.usage_text())
+        self.chat_screen.query_one("#status-line", Static).update(f"{status} · {mode}")
 
     async def ensure_reply(self):
         try:

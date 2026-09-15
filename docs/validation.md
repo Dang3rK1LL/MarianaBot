@@ -82,6 +82,9 @@ findings and resolved blockers, not just the judge's score.
 
 Each milestone is committed and pushed to the configured GitHub repository.
 
+6. Persistent streamed usage accounting and a compact, always-visible dashboard:
+   recorded by the usage/interface implementation commit.
+
 ## Interactive chat milestone · 2026-09-15
 
 Local result: **44 offline tests passed**. Ruff lint/format, the CLI demo and
@@ -111,3 +114,19 @@ welcome screen, command suggestions, help and a completed demo conversation.
 `resvg-py` renders PNGs. It is not a runtime dependency. The README screenshot
 contains demo content only. Ruff, the full offline suite, the original CLI demo,
 dependency consistency and wheel packaging are checked for this milestone.
+
+## Usage and interface milestone · 2026-09-15
+
+Local result: **54 offline tests passed**. Both account rows remain visible at
+120×32 and 80×24, including while scrolling, editing and opening slash suggestions.
+The revised UI removes the sidebar, decorative tagline, repetitive welcome copy
+and oversized controls. The draft editor grows with pasted or typed content.
+
+New tests verify reports persisted before native fixture subprocesses exit,
+Claude message deduplication, cumulative deltas, ignored output placeholders,
+cache accounting, final reconciliation, interrupted attempts, old-store backfill,
+late partial reports, missing counts, expired quotas, and background updates
+through a separate SQLite connection. Quota monitoring retains the last good
+snapshot after connection failure. No model calls or subscription usage were
+needed for these checks. The updated README screenshot uses explicitly labeled
+synthetic usage, rendered from the actual Textual app.

@@ -11,6 +11,7 @@ from pathlib import Path
 
 from marianabot.config import Config
 from marianabot.limits import SubscriptionLimits
+from marianabot.usage import UsageStream
 
 MAX_CAPTURE = 12 * 1024 * 1024
 
@@ -324,6 +325,7 @@ class NativeClient:
             "--output-format",
             "stream-json",
             "--verbose",
+            "--include-partial-messages",
             "--model",
             brain.model,
             "--effort",
@@ -346,13 +348,14 @@ class NativeClient:
             "--disable-slash-commands",
         ]
 
-    async def complete(self, prompt: str, search: bool = False) -> dict:
+    async def complete(self, prompt: str, search: bool = False, *, on_usage=None) -> dict:
         process = await launch(self.args(search), self.cwd)
         stderr_task = asyncio.create_task(drain(process.stderr))
         result = None
         messages, usage, sources = [], {}, []
         failure = None
         total = 0
+        tokens = UsageStream(self.provider)
         try:
             async with asyncio.timeout(self.config.research.request_timeout_seconds):
                 process.stdin.write(prompt.encode("utf-8"))
@@ -367,6 +370,9 @@ class NativeClient:
                     except ValueError:
                         continue
                     kind = event.get("type")
+                    reported = tokens.observe(event)
+                    if reported and on_usage:
+                        on_usage(*reported)
                     if self.provider == "openai":
                         if kind == "item.completed":
                             item = event.get("item", {})
@@ -431,6 +437,8 @@ class NativeClient:
                 result["model"] = (
                     self.config.rb.model if self.provider == "openai" else self.config.jb.model
                 )
+                if tokens.latest is not None:
+                    result["token_usage"] = tokens.latest
                 return result
         except TimeoutError:
             raise ClientError(

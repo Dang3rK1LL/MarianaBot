@@ -25,6 +25,13 @@ and review in the conversation. Expand long messages to read them in full.
 Ask MB a question by typing normally. Use `/steer` to change the brief or answer
 MB's initial questions so those answers affect subsequent research.
 
+Both usage rows stay visible above the editor: ChatGPT covers MB + RB; Claude
+covers JB. They show this run's reported input/output tokens and account allowance
+used, reset countdowns and snapshot age. Counts refresh as client reports arrive;
+Codex totals arrive at turn completion, while Claude can report intermediate usage.
+`partial` means some usage has not been reported. See [usage reporting](usage.md).
+The editor grows for long drafts, and all controls remain visible at 80×24.
+
 | Type in chat | Result |
 |---|---|
 | `/steer Limit the pilot to EUR 500.` | Changes the brief before the next round |

@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from marianabot.config import Config
+from marianabot.usage import FIELDS, normalize_usage
 
 
 class Store:
@@ -45,6 +46,11 @@ class Store:
                 id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL,
                 message_key TEXT NOT NULL, role TEXT NOT NULL, title TEXT NOT NULL,
                 text TEXT NOT NULL, created REAL NOT NULL, UNIQUE(run_id, message_key));
+            CREATE TABLE IF NOT EXISTS call_usage (
+                call_id TEXT PRIMARY KEY, input_tokens INTEGER, output_tokens INTEGER,
+                cache_read_tokens INTEGER NOT NULL, cache_write_tokens INTEGER NOT NULL,
+                reported_at REAL NOT NULL, final INTEGER NOT NULL);
+            CREATE INDEX IF NOT EXISTS calls_run ON calls(run_id, provider);
         """)
         # Additive migration for stores created before the interactive chat.
         with self.transaction():
@@ -54,6 +60,14 @@ class Store:
                 self.db.execute(
                     "ALTER TABLE runs ADD COLUMN control_epoch INTEGER NOT NULL DEFAULT 0"
                 )
+            # Backfill older responses once; live summaries never scan large prompt/result blobs.
+            for row in self.db.execute(
+                "SELECT id,provider,result,created FROM calls WHERE result IS NOT NULL AND id NOT IN (SELECT call_id FROM call_usage)"
+            ).fetchall():
+                result = json.loads(row["result"])
+                usage = normalize_usage(row["provider"], result.get("usage"))
+                if usage is not None:
+                    self._record_usage(row["id"], usage, True, row["created"])
 
     def close(self):
         self.db.close()
@@ -206,10 +220,46 @@ class Store:
 
     def finish(self, call_id: str, state: str, result=None):
         with self.db:
+            if result:
+                provider = self.db.execute(
+                    "SELECT provider FROM calls WHERE id=?", (call_id,)
+                ).fetchone()[0]
+                usage = result.get("token_usage") or normalize_usage(provider, result.get("usage"))
+                if usage is not None:
+                    self._record_usage(call_id, usage, True, time.time())
             self.db.execute(
                 "UPDATE calls SET state=?,result=? WHERE id=?",
                 (state, json.dumps(result) if result is not None else None, call_id),
             )
+
+    def _record_usage(self, call_id: str, usage: dict, final: bool, reported_at: float):
+        self.db.execute(
+            "INSERT INTO call_usage VALUES(?,?,?,?,?,?,?) ON CONFLICT(call_id) DO UPDATE SET input_tokens=excluded.input_tokens,output_tokens=excluded.output_tokens,cache_read_tokens=excluded.cache_read_tokens,cache_write_tokens=excluded.cache_write_tokens,reported_at=excluded.reported_at,final=excluded.final WHERE call_usage.final=0 OR excluded.final=1",
+            (call_id, *(usage[key] for key in FIELDS), reported_at, int(final)),
+        )
+
+    def record_usage(self, call_id: str, usage: dict, final: bool = False):
+        with self.db:
+            self._record_usage(call_id, usage, final, time.time())
+
+    def usage_totals(self, run_id: str) -> dict[str, dict]:
+        rows = self.db.execute(
+            """
+            SELECT c.provider, COUNT(*) AS calls, COUNT(u.call_id) AS reported_calls,
+                   COUNT(u.input_tokens) AS input_reports, COUNT(u.output_tokens) AS output_reports,
+                   COALESCE(SUM(u.input_tokens),0) AS input_tokens,
+                   COALESCE(SUM(u.output_tokens),0) AS output_tokens,
+                   COALESCE(SUM(u.cache_read_tokens),0) AS cache_read_tokens,
+                   COALESCE(SUM(u.cache_write_tokens),0) AS cache_write_tokens,
+                   SUM(c.state='running') AS active,
+                   SUM(CASE WHEN u.final=1 AND u.input_tokens IS NOT NULL AND u.output_tokens IS NOT NULL THEN 0 ELSE 1 END) AS incomplete,
+                   MAX(u.reported_at) AS reported_at
+            FROM calls c LEFT JOIN call_usage u ON c.id=u.call_id
+            WHERE c.run_id=? GROUP BY c.provider
+        """,
+            (run_id,),
+        )
+        return {row["provider"]: dict(row) for row in rows}
 
     def calls(self, run_id: str) -> list[dict]:
         return [

@@ -1,12 +1,10 @@
 # MarianaBot
 
-**Take a business problem below the surface.**
-
 MarianaBot is a terminal chat with a research team, an independent critical review
 team, and a master coordinator. Paste your business problem into its multiline
 editor; the teams work in the background while you ask questions and steer them.
 
-![MarianaBot terminal chat, showing the offline demo welcome screen](docs/assets/chat.png)
+![MarianaBot's conversation and fixed usage dashboard. Synthetic usage reports; no model calls.](docs/assets/chat.png)
 
 ~~~text
                          YOU
@@ -130,7 +128,20 @@ confidential business information; keep the data directory private.
 
 ## Usage limits and practical boundaries
 
-Codex account usage is checked before each MB/RB dispatch. Claude's reported
+A fixed strip above the editor shows ChatGPT (MB + RB) and Claude (JB) throughout
+research: reported input/output tokens, active calls, allowance used, reset
+countdowns and snapshot age. It stays visible while scrolling or typing commands,
+including in an 80-column terminal. Token counts cover the working MarianaBot run;
+allowance snapshots cover the provider account.
+
+The screen refreshes every 0.75 seconds. Claude token reports update during a call
+when its stream supplies them; Codex reports totals at turn completion. Missing
+counts display as unknown and incomplete totals are labeled partial. Input counts
+include cached tokens without counting them twice. There is no guessed token balance
+or inference from generated text. See [usage reporting](docs/usage.md).
+
+Codex account usage is checked before each MB/RB dispatch and every 60 seconds
+while a live worker is running, without generating model tokens. Claude's reported
 usage/reset events are recorded as they arrive. The worker waits at the configured
 usage threshold or after a limit rejection, using a reported reset when available.
 If Claude supplies no reset, it waits a conservative interval before retrying.

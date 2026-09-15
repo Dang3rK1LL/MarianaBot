@@ -5,6 +5,9 @@ from textual import events
 from textual.widgets import OptionList
 
 from marianabot.chat import Composer, MarianaChat, SessionsScreen
+from marianabot.config import Config
+from marianabot.store import Store
+from marianabot.usage import normalize_usage
 
 
 class FakeManager:
@@ -46,12 +49,17 @@ async def test_multiline_paste_send_followup_and_steer(tmp_path):
         app.post_message(events.Paste(problem))
         await pilot.pause()
         assert editor.text == problem
+        async with asyncio.timeout(2):
+            while editor.region.height != 8:
+                await pilot.pause(0.05)
+        assert editor.region.height == 8
         assert app.run_id is None  # A pasted newline must never submit the draft.
         await pilot.press("enter")
         await pilot.pause()
         assert app.store.run(app.run_id)["problem"] == problem
         assert app.manager.starts == [(app.run_id, False)]
         assert editor.text == ""
+        assert editor.region.height == 3
         await send(app, pilot, "What is the biggest risk?")
         await send(app, pilot, "/steer Limit spending to EUR 500.\nFocus on local buyers.")
         commands = app.store.commands(app.run_id)
@@ -64,7 +72,7 @@ async def test_multiline_paste_send_followup_and_steer(tmp_path):
 async def test_keyboard_suggestions_help_and_small_terminal(tmp_path):
     app = chat(tmp_path)
     async with app.run_test(size=(80, 24)) as pilot:
-        assert not app.query_one("#rail").display
+        assert app.query_one("#conversation").region.height >= 10
         assert app.query_one("#send").region.bottom <= 24
         await pilot.press("a", "ctrl+j", "b")
         assert app.query_one(Composer).text == "a\nb"
@@ -87,7 +95,7 @@ async def test_keyboard_suggestions_help_and_small_terminal(tmp_path):
         assert app.focused == app.query_one(Composer)
         await pilot.resize_terminal(120, 40)
         await pilot.pause()
-        assert app.query_one("#rail").display
+        assert app.query_one("#conversation").region.width == 120
 
 
 async def test_drafts_sessions_and_queued_message_survive_reopening(tmp_path):
@@ -209,3 +217,66 @@ async def test_slash_quit_and_unsent_demo_mode_persist(tmp_path):
         assert reopened.query_one(Composer).text == "My unsent demo problem"
         await send(reopened, pilot, "/quit")
         assert reopened.exiting
+
+
+async def test_usage_follows_background_work_and_stays_visible_while_reading_and_typing(tmp_path):
+    app = chat(tmp_path)
+    app.default_demo = app.demo = False
+    run_id = app.store.create_run("Track a business research run", Config())
+    app.manager.record = {"run_id": run_id, "mode": "research"}
+    writer = Store(app.store.directory)
+    try:
+        async with app.run_test(size=(120, 40)) as pilot:
+            await app.open_run(run_id)
+            call_id = writer.begin_call(run_id, "rb", "RB", "openai", "fixture")
+            other_id = writer.begin_call(run_id, "jb", "JB", "anthropic", "fixture")
+            await pilot.pause(1)
+            assert "— in" in str(app.query_one("#usage-openai").content)
+            assert "1 active" in str(app.query_one("#usage-openai").content)
+            assert "not reported" in str(app.query_one("#limit-anthropic").content)
+            writer.record_usage(
+                call_id,
+                normalize_usage("openai", {"input_tokens": 12000, "output_tokens": 812}),
+                final=True,
+            )
+            writer.record_usage(
+                other_id,
+                normalize_usage(
+                    "anthropic",
+                    {"input_tokens": 100, "cache_read_input_tokens": 300, "output_tokens": 50},
+                ),
+            )
+            await pilot.pause(1)
+            assert "12,000 in" in str(app.query_one("#usage-openai").content)
+            assert "400 in" in str(app.query_one("#usage-anthropic").content)
+            assert "partial" in str(app.query_one("#usage-anthropic").content)
+            for i in range(10):
+                await app.add_card("RB", f"Research {i}", "Plan paragraph.\n\n" * 5)
+            app.query_one("#conversation").scroll_home(animate=False)
+            app.query_one(Composer).load_text("/")
+            await pilot.resize_terminal(80, 24)
+            await pilot.pause(1)
+            strip = app.query_one("#usage-strip").region
+            for selector in (
+                "#usage-openai",
+                "#usage-anthropic",
+                "#limit-openai",
+                "#limit-anthropic",
+            ):
+                widget = app.query_one(selector)
+                assert widget.visible
+                assert strip.contains_region(widget.region)
+                assert widget.region.bottom < app.query_one(Composer).region.y
+                assert len(str(widget.content)) <= widget.content_region.width
+            assert app.query_one("#conversation").region.height >= 6
+            await app.new_conversation(False)
+            await pilot.pause(1)
+            assert run_id in str(app.query_one("#usage-scope").content)
+            assert "12,000 in" in str(app.query_one("#usage-openai").content)
+            app.manager.record = None
+            await app.open_run(run_id)
+            await pilot.pause(1)
+            assert "1 active" not in str(app.query_one("#usage-openai").content)
+            assert "12,000 in" in str(app.query_one("#usage-openai").content)
+    finally:
+        writer.close()

@@ -70,6 +70,7 @@ class Engine:
         self.log = log or (lambda _: None)
         self.shutdown = asyncio.Event()
         self.mailbox_lock = asyncio.Lock()
+        self.account_lock = asyncio.Lock()
         self.gates = {
             provider: asyncio.Semaphore(brain.concurrency)
             for provider, brain in (("openai", self.config.rb), ("anthropic", self.config.jb))
@@ -121,8 +122,7 @@ class Engine:
                 "paused",
                 "Disable provider extra usage/automatic credit purchases, then set subscription.overage_disabled=true before creating a live run",
             )
-        account = await self.account.snapshot(include_models=True)
-        self.limits["openai"].codex(account["limits"])
+        account = await self.refresh_account(include_models=True)
         if self.config.rb.model not in account["models"]:
             raise Halt(
                 "paused",
@@ -132,6 +132,24 @@ class Engine:
         self.emit(
             "Verified subscription authentication for both clients; MB and RB share OpenAI usage"
         )
+
+    async def refresh_account(self, include_models=False):
+        async with self.account_lock:
+            account = await self.account.snapshot(include_models=include_models)
+            self.limits["openai"].codex(account["limits"])
+            return account
+
+    async def monitor_usage(self, interval=60):
+        """Refresh account quotas during long calls/waits, without generating model tokens."""
+        if self.demo:
+            return
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                await self.refresh_account()
+            except (ClientError, OSError, ValueError):
+                # Retain the last good snapshot and its age. Dispatch preflight still gates calls.
+                pass
 
     async def capacity(self, provider: str):
         if self.demo:
@@ -143,8 +161,7 @@ class Engine:
                     self.limits[provider].remaining(), f"{provider} subscription cooling down"
                 )
             if provider == "openai":
-                account = await self.account.snapshot()
-                self.limits[provider].codex(account["limits"])
+                await self.refresh_account()
             if self.limits[provider].remaining() <= 0:
                 break
         async with self.spacing[provider]:
@@ -185,7 +202,17 @@ class Engine:
                 call_id = self.store.begin_call(self.run_id, task, brain, provider, model)
                 self.emit(f"{brain} · {task} · working")
                 try:
-                    result = await self.clients[provider].complete(content, actual_search)
+                    client = self.clients[provider]
+                    if isinstance(client, NativeClient):
+                        result = await client.complete(
+                            content,
+                            actual_search,
+                            on_usage=lambda usage, final, call_id=call_id: self.store.record_usage(
+                                call_id, usage, final
+                            ),
+                        )
+                    else:
+                        result = await client.complete(content, actual_search)
                     if structured:
                         raw = result["text"].strip()
                         if raw.startswith(chr(96) * 3):
@@ -361,10 +388,11 @@ class Engine:
             return
         self.store.update_run(self.run_id, status="running", reason="")
         self.store.recover()
-        work = mailbox = None
+        work = mailbox = monitor = None
         try:
             self.check()
             await self.preflight()
+            monitor = asyncio.create_task(self.monitor_usage())
             work = asyncio.create_task(self.research())
             mailbox = asyncio.create_task(self.mailbox())
             while True:
@@ -396,10 +424,10 @@ class Engine:
             )
             raise
         finally:
-            for task in (work, mailbox):
+            for task in (work, mailbox, monitor):
                 if task:
                     task.cancel()
-            for task in (work, mailbox):
+            for task in (work, mailbox, monitor):
                 if task:
                     with contextlib.suppress(asyncio.CancelledError, Halt, ClientError):
                         await task
@@ -408,9 +436,11 @@ class Engine:
         """Answer queued questions without restarting paused or finished research."""
         self.store.recover()
         self.store.seed_chat(self.run_id)
+        monitor = None
         try:
             self.check()
             await self.preflight()
+            monitor = asyncio.create_task(self.monitor_usage())
             await self.handle_commands(steering=False)
         except (Halt, ClientError, OSError, ValueError) as exc:
             message = (
@@ -426,3 +456,8 @@ class Engine:
                 "MB could not reply",
                 message + "\n\nUse /retry to try pending messages again.",
             )
+        finally:
+            if monitor:
+                monitor.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await monitor
