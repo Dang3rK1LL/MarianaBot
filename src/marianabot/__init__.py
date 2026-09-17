@@ -1,3 +1,3 @@
 """MarianaBot: take a problem below the surface."""
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"

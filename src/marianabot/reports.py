@@ -74,6 +74,9 @@ def export_run(store: Store, run_id: str, target: Path) -> Path:
                 "commands": commands,
                 "calls": calls,
                 "reported_usage": store.usage_totals(run_id),
+                "memory": store.memory(run_id),
+                "memory_pins": store.pins(run_id, active_only=False),
+                "compactions": store.compactions(run_id),
                 "conversation": store.messages(run_id),
             },
             ensure_ascii=False,
@@ -84,6 +87,15 @@ def export_run(store: Store, run_id: str, target: Path) -> Path:
     atomic_text(
         target / "conversation.md",
         "\n\n".join(f"## {m['role']} · {m['title']}\n\n{m['text']}" for m in store.messages(run_id))
+        + "\n",
+    )
+    memory = store.memory(run_id)
+    atomic_text(
+        target / "memory.md",
+        f"# Working research memory\n\nThrough round {memory['through_round']}. Summaries can omit detail; full sources are in history.json.\n\n{memory['text']}\n\n## Protected notes\n\n"
+        + "\n\n".join(
+            f"- {p['id']} · {p['kind']} · {p['source']}: {p['text']}" for p in store.pins(run_id)
+        )
         + "\n",
     )
     urls = {}

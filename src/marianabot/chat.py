@@ -20,7 +20,8 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Collapsible, Footer, Markdown, OptionList, Static, TextArea
 from textual.widgets.option_list import Option
 
-from marianabot.config import Config, load_config
+from marianabot.config import Config, load_config, save_model_preferences
+from marianabot.models_ui import ModelsScreen
 from marianabot.reports import export_run
 from marianabot.store import Store
 from marianabot.usage_ui import UsageStrip
@@ -39,6 +40,10 @@ COMMANDS = {
     "/open": "Open a conversation by its ID",
     "/status": "Show research progress and recent activity",
     "/usage": "Show the latest reported subscription limits",
+    "/memory": "Inspect research memory and protected notes",
+    "/models": "Choose models and effort for new research",
+    "/pin": "Keep an instruction verbatim in future context",
+    "/unpin": "Release a protected note by its ID",
     "/export": "Save the plan, conversation and evidence files",
     "/load": "Load a UTF-8 text file into the draft editor",
     "/copy": "Copy the latest research plan",
@@ -58,6 +63,7 @@ def friendly_event(message: str) -> str:
         return f"{brain} · round {number} · {role} {int(agent) + 1} {state}"
     message = re.sub(r"round-(\d+)-revision-\d+-(synthesis|verdict)", r"round \1 chair", message)
     message = message.replace("mb-intake", "your research brief")
+    message = re.sub(r"memory-[a-f0-9]{64}", "research memory", message)
     return re.sub(r"mb-command-\d+", "your message", message)
 
 
@@ -79,6 +85,8 @@ effect between rounds. MB shares RB's OpenAI allowance and may need to wait for 
 | /stop | Permanently end the run; saved work remains |
 | /new · /sessions · /open ID | Start or revisit a conversation |
 | /status · /usage | Inspect activity and reported usage |
+| /memory · /pin instruction · /unpin ID | Inspect memory and control protected notes |
+| /models | Choose model IDs and effort levels for new research |
 | /export · /copy | Save all results or copy the latest plan |
 | /load path | Load a long problem from a UTF-8 file for editing |
 | /retry | Retry pending MB messages after fixing a problem |
@@ -266,6 +274,7 @@ class MarianaChat(App):
             yield Static("MarianaBot", id="brand")
             yield Button("New", id="new")
             yield Button("Sessions", id="sessions")
+            yield Button("Models", id="models")
             yield Button("Help", id="help")
         yield Static("", id="status-line", markup=False)
         yield VerticalScroll(id="conversation")
@@ -540,7 +549,7 @@ class MarianaChat(App):
     async def command(self, name: str, argument: str):
         if name not in COMMANDS:
             raise ValueError(f"Unknown command: {name}. Type / for suggestions or use /help.")
-        if name not in ("/ask", "/steer", "/open", "/load") and argument:
+        if name not in ("/ask", "/steer", "/open", "/load", "/pin", "/unpin") and argument:
             raise ValueError(f"{name} takes no argument.")
         if name == "/help":
             self.action_help()
@@ -548,6 +557,8 @@ class MarianaChat(App):
             await self.new_conversation(name == "/demo" or self.default_demo)
         elif name == "/sessions":
             self.action_sessions()
+        elif name == "/models":
+            self.action_models()
         elif name == "/open":
             await self.open_run(argument)
         elif name == "/quit":
@@ -566,7 +577,30 @@ class MarianaChat(App):
             self.notify("File loaded into your draft. Edit it, then press Enter.")
         else:
             self.require_run()
-            if name in ("/ask", "/steer"):
+            if name == "/memory":
+                self.store.protect_reviews(self.run_id)
+                memory = self.store.memory(self.run_id)
+                notes = "\n\n".join(
+                    f"**{p['id']} · {p['kind']} · {p['source']}**\n\n{p['text']}"
+                    for p in self.store.pins(self.run_id)
+                )
+                await self.note(
+                    "Research memory",
+                    f"Through round {memory['through_round']}. The current brief and protected notes remain verbatim.\n\n{memory['text'] or 'No completed research has entered memory yet.'}\n\n### Protected notes\n\n{notes or 'No additional notes yet.'}\n\nUse **/pin instruction** to preserve exact wording, or **/unpin ID** to release an obsolete note. Full originals remain in exports.",
+                )
+            elif name == "/pin":
+                key = self.store.pin(self.run_id, argument)
+                await self.note(
+                    "Note pinned",
+                    f"{key}: {argument}\n\nPreserved verbatim in future requests. Use /steer as well if this changes the research direction.",
+                )
+            elif name == "/unpin":
+                self.store.unpin(self.run_id, argument.strip())
+                await self.note(
+                    "Note released",
+                    "Its archived text is retained; future requests no longer have to include it verbatim.",
+                )
+            elif name in ("/ask", "/steer"):
                 await self.send_message(name[1:], argument)
             elif name in ("/pause", "/stop"):
                 run = self.store.run(self.run_id)
@@ -629,7 +663,7 @@ class MarianaChat(App):
                 report = export_run(self.store, self.run_id, target)
                 await self.note(
                     "Export saved",
-                    "Report, conversation, full call history and citations:\n\n"
+                    "Report, conversation, research memory, full history and citations:\n\n"
                     + str(report.parent),
                 )
             elif name == "/copy":
@@ -764,6 +798,12 @@ class MarianaChat(App):
                     else 0
                 )
                 if working:
+                    if brain == "MB" and any(
+                        a["state"] == "running" and a.get("compacting")
+                        for a in activity
+                        if a["brain"] == "MB"
+                    ):
+                        label = "MB compacting"
                     busy.append(label + (f" ({working})" if working > 1 else ""))
             if busy:
                 status += " · " + " · ".join(busy)
@@ -798,6 +838,33 @@ class MarianaChat(App):
     @on(Button.Pressed, "#new")
     async def action_new(self):
         await self.new_conversation(self.default_demo)
+
+    @on(Button.Pressed, "#models")
+    def action_models(self):
+        try:
+            source = (
+                self.config_path.read_text(encoding="utf-8") if self.config_path.exists() else None
+            )
+            config = load_config(self.config_path) if source is not None else Config()
+            current = (
+                Config.model_validate_json(self.store.run(self.run_id)["config"])
+                if self.run_id
+                else None
+            )
+        except (OSError, ValueError) as exc:
+            self.notify(str(exc), title="Could not read model preferences", severity="error")
+            return
+
+        def chosen(preferences):
+            if preferences is not None:
+                try:
+                    save_model_preferences(self.config_path, preferences, source)
+                    self.notify("Models saved for new research runs.")
+                except (OSError, ValueError) as exc:
+                    self.notify(str(exc), title="Could not save preferences", severity="error")
+            self.action_compose()
+
+        self.push_screen(ModelsScreen(config, current), chosen)
 
     def action_compose(self):
         self.chat_screen.query_one(Composer).focus()

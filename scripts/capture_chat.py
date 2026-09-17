@@ -48,6 +48,12 @@ async def main():
             app.action_latest()
             await pilot.pause()
             app.save_screenshot("conversation.svg", path=str(output))
+            app.action_models()
+            await pilot.pause(0.2)
+            app.save_screenshot("models.svg", path=str(output))
+            await pilot.resize_terminal(80, 24)
+            await pilot.pause(0.2)
+            app.save_screenshot("models-narrow.svg", path=str(output))
         # Synthetic account reports exercise the working layout without contacting providers.
         fixture = state / "usage-fixture"
         store = Store(fixture)

@@ -41,6 +41,10 @@ The editor grows for long drafts, and all controls remain visible at 80×24.
 | `/sessions` | Opens saved conversations |
 | `/new` | Opens a fresh draft |
 | `/usage` | Shows provider-reported usage and reset times |
+| `/models` | Chooses model IDs and effort for new research |
+| `/memory` | Shows working memory and protected note IDs |
+| `/pin Keep the pilot below EUR 500.` | Preserves exact wording in future requests |
+| `/unpin ID` | Releases an obsolete protected note; keeps its archive |
 | `/export` | Saves a report, transcript, history and citations; prints the folder |
 | `/retry` | Retries pending MB messages after a failed reply |
 | `/quit` | Closes chat; background research continues |
@@ -49,6 +53,22 @@ Type `/` for suggestions, use ↑/↓ and Tab to complete a command. **F1** open
 **Ctrl+O** opens sessions, **Ctrl+L** focuses the editor, **Ctrl+End** jumps to the
 latest message, and **Ctrl+Q** closes chat. Shift+Enter also inserts a newline in
 terminals that support it. F7 selects the entire draft; Ctrl+Z undoes edits.
+
+Click **Models** or type `/models` to change either provider's model and effort.
+The existing defaults are Astra/high and Opus 5/high; **Use defaults**, then **Save**
+restores those choices. Enter a full model ID for a future release supported by
+your account. Availability and effort support are checked by the provider; no
+fallback model is silently selected. Saved choices affect new runs, while an
+existing conversation retains its original settings. MB and compaction use the
+research model. The screen shows the current run's choices when one is open.
+
+![Model and effort preferences in an 80-column terminal](assets/models.png)
+
+Older research is automatically summarized using MB's allowance. The current
+brief, pins and recorded objections stay verbatim; full originals remain saved.
+Use `/memory` to inspect this and `/export` for `memory.md` and the source archive.
+Summaries can miss detail; pin anything that must always be present. See the
+[memory guide](memory.md) for exact retention and recovery behavior.
 
 ## What runs automatically
 

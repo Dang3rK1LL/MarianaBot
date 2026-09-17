@@ -78,6 +78,12 @@ specialists per brain, scheduled one at a time to conserve subscription headroom
 and Pi memory. Increase concurrency to run multiple specialists simultaneously.
 MB and RB always share the same OpenAI gate.
 
+Use **Models** in the top bar or **/models** to choose full model IDs and reasoning
+effort levels. Defaults remain GPT-6 Astra and Claude Opus 5, both at high effort.
+MB, research and compaction share the selected OpenAI model. New IDs can be entered
+without an app update; provider access and supported effort still determine whether
+they can run. Save applies to new research; existing runs keep their configuration.
+
 ## Stay in control
 
 Type commands directly in the chat. Type `/` to see suggestions, use the arrow
@@ -89,7 +95,9 @@ keys and Tab to choose one, or press F1 for help:
 /pause
 /resume
 /sessions
+/models
 /usage
+/memory
 /export
 /quit
 ~~~
@@ -109,6 +117,21 @@ or paused runs without restarting research.
 and `/retry` retries unanswered MB messages. The original scriptable CLI remains
 available; see [CLI operations](docs/operations.md).
 
+## Research memory
+
+MB automatically condenses older research and owner dialogue when they exceed the
+working context budget. This includes specialist contributions, not just the latest
+chair's plan. The current brief and protected notes remain verbatim. Review blockers,
+dissent and required human tests become protected notes; repetition and background
+discussion can be summarized. Compaction uses the shared ChatGPT allowance and
+appears as MB activity in the dashboard.
+
+Use `/memory` to inspect the working memory and note IDs, `/pin exact instruction`
+to preserve wording, and `/unpin ID` to release an obsolete note. Full originals
+and compaction records stay on disk and in exports. If protected material itself
+cannot fit, research pauses instead of clipping it. Summaries can still miss nuance;
+this is not a guarantee of perfect recall. See [memory and compaction](docs/memory.md).
+
 ## What is persisted
 
 Every completed agent response, its input prompt, model, usage metadata, source
@@ -121,6 +144,7 @@ Exports include:
 - report.md: current brief, latest completed plan, critical review and owner conversation.
 - history.json: full local run record, completed prompts and responses.
 - conversation.md: the saved chat transcript.
+- memory.md: working research memory and protected notes.
 - citations.md: model-cited URLs, explicitly labeled as unverified.
 
 Research data and logins are not pushed to GitHub. Local reports can contain your
@@ -161,6 +185,8 @@ that could disprove the recommendation.
 
 - [Subscription authentication and billing](docs/subscriptions.md)
 - [Architecture and recovery](docs/architecture.md)
+- [Memory and compaction](docs/memory.md)
+- [Usage reporting](docs/usage.md)
 - [CLI operations](docs/operations.md)
 - [Raspberry Pi deployment](docs/raspberry-pi.md)
 - [Validation and milestones](docs/validation.md)

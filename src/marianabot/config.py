@@ -1,4 +1,7 @@
+import json
+import os
 import tomllib
+import uuid
 from pathlib import Path
 from typing import Literal
 
@@ -54,6 +57,43 @@ class Config(StrictModel):
 
 def load_config(path: Path) -> Config:
     return Config.model_validate(tomllib.loads(path.read_text(encoding="utf-8")))
+
+
+def save_model_preferences(path: Path, config: Config, expected_source: str | None):
+    """Change only the two model/effort pairs; retain billing settings and comments."""
+    current = path.read_text(encoding="utf-8") if path.exists() else None
+    if current != expected_source:
+        raise ValueError("Configuration changed on disk. Reopen /models before saving.")
+    config = Config.model_validate(config.model_dump())
+    source = current if current is not None else DEFAULT_TOML
+    changes = {
+        "rb": {"model": config.rb.model, "effort": config.rb.effort},
+        "jb": {"model": config.jb.model, "effort": config.jb.effort},
+    }
+    lines, section, pending = [], None, {}
+    for line in source.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("[") and "]" in stripped:
+            lines.extend(f"{key} = {json.dumps(value)}" for key, value in pending.items())
+            section = stripped[1 : stripped.index("]")]
+            pending = changes.pop(section, {}).copy()
+        key = stripped.split("=", 1)[0].strip() if "=" in stripped else None
+        if key in pending:
+            line = f"{key} = {json.dumps(pending.pop(key))}"
+        lines.append(line)
+    lines.extend(f"{key} = {json.dumps(value)}" for key, value in pending.items())
+    for section, values in changes.items():
+        lines += ["", f"[{section}]"] + [
+            f"{key} = {json.dumps(value)}" for key, value in values.items()
+        ]
+    output = "\n".join(lines) + "\n"
+    Config.model_validate(tomllib.loads(output))
+    temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
+    try:
+        temporary.write_text(output, encoding="utf-8")
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 DEFAULT_TOML = """# Official clients and subscription logins only. No API billing.

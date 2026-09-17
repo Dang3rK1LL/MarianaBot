@@ -72,10 +72,18 @@ human_tests and dissent. Malformed output cannot advance a round. Validation err
 and temporary client failures have a bounded retry count; subscription exhaustion
 waits for reset independently of that retry count.
 
-Prompts allocate a bounded share of context to each component and visibly mark
-truncation. Full prompts and responses remain on disk. This bounded working memory
-is intentionally simpler than retrieval over an unlimited transcript; very long
-specialist outputs can be clipped before synthesis.
+Prompts use a strict evidence size bound after semantic compaction. The compactor
+runs as MB through the normal OpenAI gate, archives source text before summarizing,
+and reuses completed summaries by content identity. Large fields are processed in
+overlapping chunks; small fields remain unchanged. A rolling checkpoint includes
+completed rounds, specialist outputs and answered owner dialogue.
+
+Current briefs, owner messages and protected notes bypass compaction. Review
+blockers, dissent and requested human tests are automatically protected; owner
+pins are explicit. Exhausting the protected context pauses the run. The production
+engine no longer uses per-field truncation as a fallback. Memory is a fallible
+summary with original archives, not arbitrary retrieval or perfect recall. See
+[memory and compaction](memory.md).
 
 A separate MB mailbox task answers owner questions during research. It shares the
 RB provider semaphore, so questions wait if OpenAI capacity is occupied or exhausted.

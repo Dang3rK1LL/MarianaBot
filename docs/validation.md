@@ -83,7 +83,9 @@ findings and resolved blockers, not just the judge's score.
 Each milestone is committed and pushed to the configured GitHub repository.
 
 6. Persistent streamed usage accounting and a compact, always-visible dashboard:
-   recorded by the usage/interface implementation commit.
+   da9ce86. All four Windows/Ubuntu and Python 3.11/3.13 CI jobs passed.
+7. Protected research memory, intelligent compaction, and model/effort preferences:
+   recorded by the 0.4 implementation commit.
 
 ## Interactive chat milestone · 2026-09-15
 
@@ -130,3 +132,27 @@ through a separate SQLite connection. Quota monitoring retains the last good
 snapshot after connection failure. No model calls or subscription usage were
 needed for these checks. The updated README screenshot uses explicitly labeled
 synthetic usage, rendered from the actual Textual app.
+
+## Memory and model preferences milestone · 2026-09-17
+
+Local result: **69 offline tests passed**. Ruff lint and formatting checks, the
+two-round CLI demo, dependency consistency and package build passed. No live model
+requests were used to validate these changes.
+
+Compaction tests cover complete chunk processing, exact protected wording,
+shared MB/OpenAI accounting, concurrent summary reuse, restart reuse, preservation
+of early findings across 28 simulated rounds, specialist contributions, historical
+objections, owner dialogue answered out of order, export provenance, invalid
+summaries, invented source URLs, protected-context overflow, and pause/resume during
+compaction. The simulated summarizer checks orchestration and retention mechanics;
+it does not establish real-model summarization fidelity.
+
+Model preference tests cover preserving billing/research settings and comments,
+minimal/new configurations, detection of external file edits, invalid IDs, draft
+preservation on cancel, the defaults button, and model/effort changes applied to
+new runs without changing existing run snapshots. Screens were rendered and reviewed
+at 120×40 and 80×24, including the model dialog and current-run settings.
+
+Real-model compaction quality across a week, provider support for newly entered
+model/effort combinations and long-running quota reset behavior remain outside
+these offline checks. Existing small live smoke results above are unchanged.

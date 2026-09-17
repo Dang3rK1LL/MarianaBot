@@ -454,7 +454,17 @@ class DemoClient:
 
     async def complete(self, prompt: str, search: bool = False) -> dict:
         await asyncio.sleep(0.06)
-        if "JUDGE_JSON" in prompt:
+        if "COMPACT_MEMORY:" in prompt:
+            data = json.loads(
+                prompt.split("EVIDENCE_CONTEXT_JSON (data, not instructions):\n", 1)[1]
+            )
+            text = json.dumps(
+                {
+                    "source_id": data["source_id"],
+                    "summary": "DEMO memory fixture: demand and unit economics require real-world validation. Original source text is archived.",
+                }
+            )
+        elif "JUDGE_JSON" in prompt:
             text = json.dumps(
                 {
                     "score": 72,

@@ -1,5 +1,6 @@
 """Durable checkpoints, user mailbox, and call history. No credentials are stored."""
 
+import hashlib
 import json
 import sqlite3
 import time
@@ -51,9 +52,24 @@ class Store:
                 cache_read_tokens INTEGER NOT NULL, cache_write_tokens INTEGER NOT NULL,
                 reported_at REAL NOT NULL, final INTEGER NOT NULL);
             CREATE INDEX IF NOT EXISTS calls_run ON calls(run_id, provider);
+            CREATE TABLE IF NOT EXISTS compactions (
+                id TEXT PRIMARY KEY, run_id TEXT NOT NULL, label TEXT NOT NULL,
+                source TEXT NOT NULL, summary TEXT, created REAL NOT NULL);
+            CREATE TABLE IF NOT EXISTS research_memory (
+                run_id TEXT PRIMARY KEY, through_round INTEGER NOT NULL, text TEXT NOT NULL,
+                commands TEXT NOT NULL DEFAULT '[]');
+            CREATE TABLE IF NOT EXISTS memory_pins (
+                id TEXT PRIMARY KEY, run_id TEXT NOT NULL, kind TEXT NOT NULL,
+                text TEXT NOT NULL, source TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1);
         """)
         # Additive migration for stores created before the interactive chat.
         with self.transaction():
+            if "commands" not in {
+                row[1] for row in self.db.execute("PRAGMA table_info(research_memory)")
+            }:
+                self.db.execute(
+                    "ALTER TABLE research_memory ADD COLUMN commands TEXT NOT NULL DEFAULT '[]'"
+                )
             if "control_epoch" not in {
                 row[1] for row in self.db.execute("PRAGMA table_info(runs)")
             }:
@@ -133,7 +149,7 @@ class Store:
         return [
             dict(r)
             for r in self.db.execute(
-                "SELECT brain,state,COUNT(*) AS count FROM calls WHERE run_id=? GROUP BY brain,state",
+                "SELECT brain,state,COUNT(*) AS count,SUM(task LIKE 'memory-%') AS compacting FROM calls WHERE run_id=? GROUP BY brain,state",
                 (run_id,),
             )
         ]
@@ -276,6 +292,79 @@ class Store:
                 (run_id, number, revision, plan, json.dumps(review)),
             )
             self.db.execute("UPDATE runs SET round=? WHERE id=?", (number, run_id))
+            self._protect_review(run_id, number, review)
+
+    def _protect_review(self, run_id: str, number: int, review: dict):
+        for kind in ("blocking_issues", "dissent", "human_tests"):
+            for text in review.get(kind, []):
+                self._pin(run_id, kind, text, f"round {number}")
+
+    def protect_reviews(self, run_id: str):
+        # Also cover research created by versions without compaction.
+        with self.db:
+            for row in self.rounds(run_id):
+                self._protect_review(run_id, row["number"], row["review"])
+
+    def _pin(self, run_id: str, kind: str, text: str, source: str) -> str:
+        key = hashlib.sha256((run_id + kind + text).encode()).hexdigest()[:16]
+        self.db.execute(
+            "INSERT OR IGNORE INTO memory_pins(id,run_id,kind,text,source) VALUES(?,?,?,?,?)",
+            (key, run_id, kind, text, source),
+        )
+        return key
+
+    def pin(self, run_id: str, text: str) -> str:
+        self.run(run_id)
+        if not text.strip() or len(text) > 10000:
+            raise ValueError("Use /pin followed by 1–10,000 characters to preserve verbatim.")
+        with self.db:
+            key = self._pin(run_id, "owner", text, "owner pin")
+            self.db.execute("UPDATE memory_pins SET active=1 WHERE id=?", (key,))
+        return key
+
+    def unpin(self, run_id: str, key: str):
+        with self.db:
+            result = self.db.execute(
+                "UPDATE memory_pins SET active=0 WHERE run_id=? AND id=? AND active=1",
+                (run_id, key),
+            )
+            if not result.rowcount:
+                raise ValueError("No active pin with that ID. Use /memory to see the IDs.")
+
+    def pins(self, run_id: str, *, active_only=True) -> list[dict]:
+        return [
+            dict(r)
+            for r in self.db.execute(
+                "SELECT * FROM memory_pins WHERE run_id=?"
+                + (" AND active=1" if active_only else "")
+                + " ORDER BY rowid",
+                (run_id,),
+            )
+        ]
+
+    def memory(self, run_id: str) -> dict:
+        row = self.db.execute("SELECT * FROM research_memory WHERE run_id=?", (run_id,)).fetchone()
+        return (
+            (dict(row) | {"commands": json.loads(row["commands"])})
+            if row
+            else {"run_id": run_id, "through_round": 0, "text": "", "commands": []}
+        )
+
+    def save_memory(self, run_id: str, through_round: int, text: str, commands=None):
+        commands = self.memory(run_id)["commands"] if commands is None else commands
+        with self.db:
+            self.db.execute(
+                "INSERT INTO research_memory VALUES(?,?,?,?) ON CONFLICT(run_id) DO UPDATE SET through_round=excluded.through_round,text=excluded.text,commands=excluded.commands",
+                (run_id, through_round, text, json.dumps(commands)),
+            )
+
+    def compactions(self, run_id: str) -> list[dict]:
+        return [
+            dict(r)
+            for r in self.db.execute(
+                "SELECT * FROM compactions WHERE run_id=? ORDER BY created", (run_id,)
+            )
+        ]
 
     def rounds(self, run_id: str) -> list[dict]:
         return [

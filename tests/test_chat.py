@@ -280,3 +280,18 @@ async def test_usage_follows_background_work_and_stays_visible_while_reading_and
             assert "12,000 in" in str(app.query_one("#usage-openai").content)
     finally:
         writer.close()
+
+
+async def test_memory_commands_pin_show_and_release_exact_text_without_model_calls(tmp_path):
+    app = chat(tmp_path)
+    async with app.run_test() as pilot:
+        await send(app, pilot, "A business plan")
+        await send(app, pilot, "/pin Never exceed EUR 500.\nDo not borrow.")
+        pins = app.store.pins(app.run_id)
+        assert pins[0]["text"] == "Never exceed EUR 500.\nDo not borrow."
+        await send(app, pilot, "/memory")
+        assert pins[0]["id"] in app.store.messages(app.run_id)[-1]["text"]
+        await send(app, pilot, "/unpin " + pins[0]["id"])
+        assert not app.store.pins(app.run_id)
+        assert app.store.pins(app.run_id, active_only=False)[0]["text"] == pins[0]["text"]
+        assert not app.store.calls(app.run_id)

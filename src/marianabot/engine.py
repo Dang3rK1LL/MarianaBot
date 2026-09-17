@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from marianabot.clients import ClientError, CodexAccount, DemoClient, NativeClient, claude_account
 from marianabot.config import Config
 from marianabot.limits import SubscriptionLimits
+from marianabot.memory import Compactor, size
 from marianabot.prompts import (
     JB_ROLES,
     JUDGE,
@@ -89,6 +90,7 @@ class Engine:
             else NativeClient(p, self.config, client_dir, self.limits[p])
             for p in self.gates
         }
+        self.memory = Compactor(self)
 
     def emit(self, message: str):
         self.store.event(self.run_id, message)
@@ -180,6 +182,8 @@ class Engine:
         data: dict,
         search: bool = False,
         structured: bool = False,
+        internal_compaction: bool = False,
+        validate=None,
     ) -> dict:
         self.check()
         cached = self.store.cached(self.run_id, task)
@@ -190,10 +194,14 @@ class Engine:
         actual_search = search and self.config.research.web_search
         max_chars = self.config.research.max_context_chars
         if task == "mb-intake":
-            max_chars = max(max_chars, len(data["owner_problem"]) + 1000)
+            max_chars = max(max_chars, size(data) + 1000)
         elif task.startswith("mb-command-"):
             max_chars = max(max_chars, len(data["owner_message"]) * len(data) + 1000)
-        content = prompt(instruction, data, max_chars, actual_search)
+        if not internal_compaction:
+            if task != "mb-intake":
+                data = data | self.memory.context()
+            data = await self.memory.prepare(data, max_chars)
+        content = prompt(instruction, data, max_chars, actual_search, strict=True)
         attempt = 0
         while True:
             async with self.gates[provider]:
@@ -218,13 +226,20 @@ class Engine:
                         if raw.startswith(chr(96) * 3):
                             raw = "\n".join(raw.splitlines()[1:-1])
                         result["review"] = Review.model_validate_json(raw).model_dump()
+                    if validate:
+                        validate(result)
                     result["prompt"] = content
                     self.store.finish(call_id, "done", result)
                     self.emit(f"{brain} · {task} · saved")
                     return result
                 except (ValidationError, ValueError):
                     self.store.finish(call_id, "invalid")
-                    error = ClientError("Judge output failed schema validation", retryable=True)
+                    error = ClientError(
+                        "Memory compaction failed validation; originals retained"
+                        if internal_compaction
+                        else "Judge output failed schema validation",
+                        retryable=True,
+                    )
                 except ClientError as exc:
                     self.store.finish(call_id, "limited" if exc.limited else "unknown")
                     error = exc
@@ -274,6 +289,7 @@ class Engine:
             instruction = MASTER_STEER if steering else MASTER_ANSWER
             answer = await self.call("MB", f"mb-command-{command['id']}", instruction, data)
             self.store.answer(self.run_id, command, answer["text"])
+            await self.memory.advance()
             self.emit(
                 f"MB answered {command['kind']} #{command['id']}"
                 + ("; brief updated for next round" if steering else "")
@@ -285,6 +301,7 @@ class Engine:
             await asyncio.sleep(1)
 
     async def research(self):
+        await self.memory.advance()
         run = self.store.run(self.run_id)
         if not run["brief"]:
             intake = await self.call(
@@ -378,6 +395,7 @@ class Engine:
             self.store.publish_round(
                 self.run_id, number, run["revision"], synthesis["text"], chair["review"]
             )
+            await self.memory.advance()
             self.emit(
                 f"Round {number} checkpoint · score {chair['review']['score']}/100 · {chair['review']['verdict']}"
             )
@@ -441,6 +459,7 @@ class Engine:
             self.check()
             await self.preflight()
             monitor = asyncio.create_task(self.monitor_usage())
+            await self.memory.advance()
             await self.handle_commands(steering=False)
         except (Halt, ClientError, OSError, ValueError) as exc:
             message = (

@@ -77,6 +77,12 @@ Export while running to inspect the last completed round. Full prompts and model
 outputs, including intermediate work, are in history.json. Citation URLs are
 leads to inspect, not independently verified facts.
 
+Exports also include `memory.md`. `history.json` retains original compaction
+sources, summaries and released pins. Compaction pauses on validation failure or
+protected-context overflow; it never silently clips protected notes. Inspect
+`/memory` in chat and release obsolete notes with `/unpin ID`, or explicitly
+resume with a larger `research.max_context_chars` configuration where appropriate.
+
 For a simple consistent backup, stop/pause the worker and copy the entire data
 directory. If backing up while it runs, use SQLite's backup API rather than
 copying just the .sqlite3 file: WAL files can contain recent commits.
