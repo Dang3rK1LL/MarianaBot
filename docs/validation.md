@@ -218,3 +218,28 @@ and local acknowledgement; uncertain control requests are not replayed blindly.
 The laptop's official Claude Code was updated from 2.1.257 to 2.1.283 for Opus 5.5.
 The public defaults and owner's local new-run preferences use Opus 5.5/medium.
 Previous research records are unchanged.
+
+## Version 0.5 deployment verification (September 28, 2026)
+
+The optional-Discord code milestone `0d2e34c` passed all six GitHub CI jobs:
+Windows and Ubuntu, each on Python 3.11, 3.13 and 3.14.
+[CI result](https://github.com/Dang3rK1LL/MarianaBot/actions/runs/36436091731).
+
+The existing ARM64 Ubuntu VPS was checked for active research before deployment.
+A database backup and private configuration copy were made, the code was updated,
+and the terminal service restarted successfully. New server runs use Astra/high
+and Opus 5.5/medium; the overage-disabled attestation was preserved. Both server
+subscription logins passed doctor. On Python 3.14.4, 93 offline tests passed and
+one SDK-adapter test was skipped because the optional Discord package is not
+installed on that host. Discord remains unconfigured and disconnected.
+
+One authorized low-effort Opus 5.5 connectivity request returned the expected
+JSON through Claude Code 2.1.283: 466 input tokens, 9 output tokens, no tool calls
+and no script retries. The provider reported an API-equivalent estimate of
+USD 0.002044; this is diagnostic metadata, not evidence of a subscription charge.
+This verifies model access and parsing, not full multi-day research performance.
+
+The laptop passed 94 offline tests and its Codex subscription check. Its updated
+Claude client reports signed out both directly and through MarianaBot; local
+live use needs `claude auth login --claudeai`. Server use does not depend on the
+laptop's Claude login. No credential files were read or copied to resolve this.
