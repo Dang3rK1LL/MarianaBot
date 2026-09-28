@@ -53,7 +53,12 @@ else:
         emit({"type": "turn.completed", "usage": {"input_tokens": 10, "output_tokens": 20}})
     else:
         emit(
-            {"type": "system", "subtype": "init", "model": "claude-opus-5", "apiKeySource": "none"}
+            {
+                "type": "system",
+                "subtype": "init",
+                "model": "claude-opus-5-5",
+                "apiKeySource": "none",
+            }
         )
         emit(
             {

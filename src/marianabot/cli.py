@@ -22,7 +22,7 @@ from marianabot.store import Store
 from marianabot.ui import dashboard
 
 app = typer.Typer(
-    help="MarianaBot · Take a problem below the surface.",
+    help="Persistent research with independent critique and a conversation you can steer.",
     no_args_is_help=False,
     invoke_without_command=True,
     pretty_exceptions_enable=False,
@@ -62,6 +62,10 @@ def chat(
     if demo and data_dir == DEFAULT_DATA:
         data_dir = DEFAULT_DATA / "demo"
     try:
+        if not demo and not config.exists() and sys.stdin.isatty():
+            from marianabot.setup import configure
+
+            configure(config, data_dir, console)
         result = MarianaChat(data_dir, config, demo=demo, run_id=run_id).run()
         if result:
             console.print(Text(result))
@@ -74,7 +78,9 @@ def config_at(path: Path, demo: bool = False) -> Config:
         return load_config(path)
     if demo:
         return Config()
-    raise ValueError("Configuration missing. Run mariana init first.")
+    raise ValueError(
+        "Configuration missing. Run mariana setup first (or mariana init for defaults)."
+    )
 
 
 def fail(exc):
@@ -86,6 +92,17 @@ def fail(exc):
         message = str(exc)
     console.print(Text(message, style="red"))
     raise typer.Exit(2)
+
+
+@app.command()
+def setup(config: Path = Path("mariana.toml"), data_dir: DataDir = DEFAULT_DATA):
+    """Choose models and configure live research on this machine."""
+    from marianabot.setup import configure
+
+    try:
+        configure(config, data_dir, console)
+    except (ValueError, OSError) as exc:
+        fail(exc)
 
 
 @app.command()

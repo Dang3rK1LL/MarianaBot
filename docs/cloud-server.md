@@ -41,7 +41,7 @@ curl -fsSL https://claude.ai/install.sh | bash
 export PATH="$HOME/.local/bin:$PATH"
 codex login --device-auth
 claude auth login --claudeai
-.venv/bin/mariana init --data-dir ~/.local/share/marianabot
+.venv/bin/mariana setup --data-dir ~/.local/share/marianabot
 ```
 
 Finish each login in your own browser. Paste any returned Claude login code into
@@ -67,8 +67,6 @@ systemctl --user enable --now marianabot-terminal.service marianabot-backup.time
 mariana
 ```
 
-Use this terminal service **instead of** enabling the older per-run
-`marianabot@RUN_ID` service on the same data directory.
 SSH key authentication is the only remote entry point needed; no new public ports
 are opened. Keep the server's standard firewall in place.
 

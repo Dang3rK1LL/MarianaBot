@@ -4,7 +4,7 @@
 Alternatively, in PowerShell:
 
 ```powershell
-cd C:\Programming\Codex\MarianaBot
+cd MarianaBot
 .\.venv\Scripts\mariana.exe
 ```
 
@@ -18,7 +18,7 @@ file into the editor without sending it. Unsent drafts save automatically.
 
 MB (Astra) turns your problem into a research brief and lists assumptions and
 questions. Three RB specialists (Astra) develop independent proposals; their chair
-compares and combines them. Three JB critics (Opus 5) challenge the plan; their
+compares and combines them. Three JB critics (Opus 5.5) challenge the plan; their
 chair writes a review and the next prompt for RB. You see each brief, combined plan
 and review in the conversation. Expand long messages to read them in full.
 
@@ -55,10 +55,9 @@ latest message, and **Ctrl+Q** closes chat. Shift+Enter also inserts a newline i
 terminals that support it. F7 selects the entire draft; Ctrl+Z undoes edits.
 
 Click **Models** or type `/models` to change either provider's model and effort.
-The existing defaults are Astra/high and Opus 5/high; **Use defaults**, then **Save**
+The existing defaults are Astra/high and Opus 5.5/medium; **Use defaults**, then **Save**
 restores those choices. Enter a full model ID for a future release supported by
-your account. Availability and effort support are checked by the provider; no
-fallback model is silently selected. Saved choices affect new runs, while an
+your account. Availability and effort support are checked by the provider; MarianaBot does not request a fallback model. Saved choices affect new runs, while an
 existing conversation retains its original settings. MB and compaction use the
 research model. The screen shows the current run's choices when one is open.
 
@@ -97,8 +96,8 @@ sleep and pauses. No Windows service or power-setting change is installed.
 
 ## Local setup and a free demo
 
-Your existing provider logins and local `subscription.overage_disabled = true`
-setting are retained. This records your confirmation that usage credits are off;
+Run `mariana setup` to select models and configure live use. Existing provider
+logins are retained. This records your confirmation that usage credits are off;
 it does not independently inspect provider billing settings. Configuration and
 research stay local and outside Git.
 

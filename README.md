@@ -1,200 +1,157 @@
 # MarianaBot
 
-MarianaBot is a terminal chat with a research team, an independent critical review
-team, and a master coordinator. Paste your business problem into its multiline
-editor; the teams work in the background while you ask questions and steer them.
+A personal research workspace in your terminal. Describe a business problem,
+let a research team build a plan, and let a separate review team challenge it.
+Ask questions or change direction while they work. Each round, critique and
+decision stays in a local research history.
 
-![MarianaBot's conversation and fixed usage dashboard. Synthetic usage reports; no model calls.](docs/assets/chat.png)
+![MarianaBot conversation and persistent usage display; offline demonstration.](docs/assets/chat.png)
 
-~~~text
-                         YOU
-                          |
-                   MB · GPT-6 Astra
-                brief / questions / steering
-                          |
-   RB · GPT-6 Astra       |        JB · Claude Opus 5
-   independent proposals -+-----> independent critiques
-   compare + synthesize <------- compare + next challenge
-                          |
-               plans, evidence, checkpoints
-~~~
+MarianaBot runs on **your own computer by default**, using your own ChatGPT and
+Claude subscription logins through the official Codex and Claude Code clients.
+Cloning this repository does not connect to the author's computer, server or accounts.
+An [optional personal VPS setup](docs/cloud-server.md) keeps work running when
+your laptop is off. There is no shared MarianaBot hosting service.
 
-**Subscription mode:** MB and RB use the official Codex CLI with your ChatGPT login.
-JB uses the official Claude Code CLI with your Claude subscription login.
-MarianaBot never calls the paid APIs directly and removes API-key overrides from
-client environments. Model access still depends on your account.
+## Install
 
-## Try it without using any subscription allowance
+You need Git and Python 3.11 or newer. For live research, install
+[Codex](https://learn.chatgpt.com/docs/cli) and
+[Claude Code](https://code.claude.com/docs/en/setup), with subscription access to
+your chosen models. Opus 5.5 requires Claude Code 2.1.280 or newer.
 
-Python 3.11 or newer:
+```text
+git clone https://github.com/Dang3rK1LL/MarianaBot.git
+cd MarianaBot
+```
 
-~~~powershell
+Windows PowerShell:
+
+```powershell
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
-.\.venv\Scripts\python.exe -m marianabot chat --demo
-~~~
+.\.venv\Scripts\python.exe -m pip install -e .
+.\.venv\Scripts\mariana.exe setup
+.\MarianaBot.cmd
+```
 
-On Linux/macOS:
+Linux or macOS:
 
-~~~bash
+```bash
 python3 -m venv .venv
-.venv/bin/python -m pip install -e ".[dev]"
-.venv/bin/mariana chat --demo
-~~~
+.venv/bin/python -m pip install -e .
+.venv/bin/mariana setup
+.venv/bin/mariana
+```
 
-Type a problem and press Enter. The demo uses deterministic fixtures and performs
-two research/review rounds without network or model calls. It saves exports under
-.mariana/demo/exports/. For a noninteractive demonstration, use `mariana demo --plain`.
+The setup wizard asks for model IDs and effort levels. Press Enter to keep the
+defaults: **GPT-6 Astra / high** for research and coordination, and
+**Claude Opus 5.5 / medium** for critique. Medium follows Anthropic's current
+[Opus 5.5 guidance](https://code.claude.com/docs/en/model-config).
+You can enter future model IDs without waiting for a MarianaBot update.
+Your provider must support the model and effort you choose.
 
-On Windows, double-click **MarianaBot.cmd** after installation to open normal chat.
-From an activated environment, simply run **mariana**. Long pasted text stays
-editable; Enter sends, Alt+Enter or Ctrl+J inserts a newline. Drafts save locally.
+Before live use, sign in from a terminal:
 
-## Set up a real run
+```text
+codex login
+claude auth login --claudeai
+```
 
-For an existing Windows laptop installation, see the [short laptop guide](docs/laptop.md).
+Run `mariana doctor` from the activated environment, or use its full executable
+path as above. It checks installation and account metadata without model inference.
+Disable paid extra usage, usage credits and automatic credit purchases in both
+provider accounts, then confirm this in setup. Live research stays locked until
+you confirm. MarianaBot cannot inspect or change those billing settings.
+See [subscription setup](docs/subscriptions.md).
 
-Read [subscription setup](docs/subscriptions.md) first. API keys do not draw from
-Plus or Pro subscriptions. Extra usage and automatic credit purchases must be off
-in the provider accounts before enabling a live run.
+To try the interface without logins or model usage, run
+`mariana chat --demo`. It uses offline fixtures and a separate demo directory.
 
-~~~text
-mariana init
-mariana doctor
-mariana
-~~~
+## Use it
 
-The first command creates a local mariana.toml. Set subscription.overage_disabled
-to true only after checking the provider billing settings yourself.
-The configuration defaults to false; live inference is blocked until it is set.
+Paste your problem into the editor. **Enter sends; Alt+Enter or Ctrl+J adds a
+newline.** Long pastes remain editable. Include constraints, what you already
+know, and what decision the research should help you make.
 
-MB turns the initial problem into a brief with constraints, assumptions, success
-criteria and questions. Three RB specialists independently work on the brief, then
-an RB chair compares their proposals. Three JB critics independently challenge the
-plan, then a JB chair compares objections and produces the next research prompt.
+| Component | What it does |
+|---|---|
+| Master brain (MB) | Prepares the brief, answers you and applies steering; shares the research model and allowance |
+| Research brain (RB) | Three independent specialists propose approaches; a chair compares them and writes the plan |
+| Judging brain (JB) | Three independent critics challenge the plan; a chair combines objections into the next research prompt |
 
-Specialist count and concurrency are separate settings. Defaults are three
-specialists per brain, scheduled one at a time to conserve subscription headroom
-and Pi memory. Increase concurrency to run multiple specialists simultaneously.
-MB and RB always share the same OpenAI gate.
+The teams alternate until a configured limit, qualified approval, a score plateau
+or a need for human evidence. Defaults are 24 rounds and 72 elapsed hours.
+Specialists run one at a time by default; count and concurrency are configurable.
+More rounds and higher reviewer scores do not establish that a business will work.
+The output includes uncertainties and tests you can carry out in the real world.
 
-Use **Models** in the top bar or **/models** to choose full model IDs and reasoning
-effort levels. Defaults remain GPT-6 Astra and Claude Opus 5, both at high effort.
-MB, research and compaction share the selected OpenAI model. New IDs can be entered
-without an app update; provider access and supported effort still determine whether
-they can run. Save applies to new research; existing runs keep their configuration.
+Type normally to ask MB a question. Type `/` to see commands:
 
-## Stay in control
+| Command | Action |
+|---|---|
+| `/steer Focus on a pilot below EUR 500.` | Changes the brief at the next round boundary |
+| `/pause` / `/resume` | Pauses or continues from saved checkpoints |
+| `/stop` | Permanently ends this research run |
+| `/sessions` / `/new` | Opens saved research or starts a new draft |
+| `/models` | Changes models and efforts for new research |
+| `/memory` / `/pin exact wording` | Inspects memory or protects an instruction from summarization |
+| `/export` | Writes the plan, transcript, history, memory and cited links |
+| `/quit` | Closes chat while background research continues |
 
-Type commands directly in the chat. Type `/` to see suggestions, use the arrow
-keys and Tab to choose one, or press F1 for help:
+The app starts its worker and client processes itself. Reopening chat reconnects
+to saved work. One research worker runs per data directory. On a laptop, keep it
+awake and online; after reboot, reopen and `/resume`. A deliberately paused run
+stays paused. See the [daily-use guide](docs/laptop.md) and
+[scriptable CLI](docs/operations.md).
 
-~~~text
-/ask What is the weakest assumption so far?
-/steer Focus on Hungary and require a pilot below EUR 500.
-/pause
-/resume
-/sessions
-/models
-/usage
-/memory
-/export
-/quit
-~~~
+## Usage and memory
 
-Ordinary follow-up text also goes to MB. `/steer` updates the brief at the next
-round boundary and resets convergence tracking. `/pause` and `/stop` are local
-controls that do not need a model response. `/stop` permanently ends research.
+ChatGPT and Claude usage stay visible above the editor: reported input/output
+tokens, active calls, account allowance and reset times when provided. Missing
+values stay unknown; incomplete totals are marked partial. This is provider
+telemetry, not a guaranteed live balance. Other apps share your allowance.
 
-The app starts and manages its own hidden worker and agent processes. **Closing
-chat leaves research running**; reopen it to reconnect. Use `/pause` first to
-suspend research. Keep the laptop awake and online. Rebooting needs a manual
-`/resume`; completed calls are reused. `/new` opens another draft; one session can
-research at a time in each data directory. MB can answer questions about finished
-or paused runs without restarting research.
+The worker waits at the configured usage threshold or after a limit rejection.
+It uses reported reset times where available and a conservative retry interval
+otherwise. It does not purchase credits or switch to API billing.
+See [usage reporting](docs/usage.md) for what each provider exposes.
 
-`/load path` loads a UTF-8 problem file for editing, `/copy` copies the latest plan,
-and `/retry` retries unanswered MB messages. The original scriptable CLI remains
-available; see [CLI operations](docs/operations.md).
+Older research is automatically summarized through MB. The current brief,
+protected notes, blockers and dissent are retained; original material and
+compaction records remain on disk. Summaries can lose nuance, so pin anything
+that must keep its exact wording. If protected material cannot fit, research
+pauses. The [memory guide](docs/memory.md) explains the working context budget.
 
-## Research memory
+## Your data and your server
 
-MB automatically condenses older research and owner dialogue when they exceed the
-working context budget. This includes specialist contributions, not just the latest
-chair's plan. The current brief and protected notes remain verbatim. Review blockers,
-dissent and required human tests become protected notes; repetition and background
-discussion can be summarized. Compaction uses the shared ChatGPT allowance and
-appears as MB activity in the dashboard.
+Settings live in `mariana.toml`; research and exports default to `.mariana/`.
+Both are excluded from Git. Provider logins stay in the official clients' own
+storage. Prompts and relevant research are sent to the selected model providers;
+native web search can contact external services. Exported citation links have
+not been independently verified by MarianaBot.
 
-Use `/memory` to inspect the working memory and note IDs, `/pin exact instruction`
-to preserve wording, and `/unpin ID` to release an obsolete note. Full originals
-and compaction records stay on disk and in exports. If protected material itself
-cannot fit, research pauses instead of clipping it. Summaries can still miss nuance;
-this is not a guarantee of perfect recall. See [memory and compaction](docs/memory.md).
+**MarianaBot.cmd** runs locally. **MarianaBot-Server.cmd** connects only to the
+server specified in your own local `mariana-server.json`; it cannot connect
+until you create that profile and establish SSH trust. Local and server research
+are separate stores, with no automatic synchronization. Server exports stay on
+the server until downloaded. Follow the [VPS guide](docs/cloud-server.md) to
+install on your own machine, with persistent sessions and daily local backups.
 
-## What is persisted
+Public source code does not publish your running installation. Git exclusions
+are an accident-prevention measure, not access control: keep research, backups,
+SSH keys and client credentials private. Read the [security notes](SECURITY.md).
 
-Every completed agent response, its input prompt, model, usage metadata, source
-metadata, each round's plan and review, MB conversation, and observed quota resets.
-A single-worker lock prevents duplicate workers in one data directory.
-SQLite checkpoints let a restarted process skip completed agent tasks.
+## Development
 
-Exports include:
+```text
+python -m pip install -e ".[dev]"
+python -m ruff check src tests scripts
+python -m ruff format --check src tests scripts
+python -m pytest -q
+```
 
-- report.md: current brief, latest completed plan, critical review and owner conversation.
-- history.json: full local run record, completed prompts and responses.
-- conversation.md: the saved chat transcript.
-- memory.md: working research memory and protected notes.
-- citations.md: model-cited URLs, explicitly labeled as unverified.
-
-Research data and logins are not pushed to GitHub. Local reports can contain your
-confidential business information; keep the data directory private.
-
-## Usage limits and practical boundaries
-
-A fixed strip above the editor shows ChatGPT (MB + RB) and Claude (JB) throughout
-research: reported input/output tokens, active calls, allowance used, reset
-countdowns and snapshot age. It stays visible while scrolling or typing commands,
-including in an 80-column terminal. Token counts cover the working MarianaBot run;
-allowance snapshots cover the provider account.
-
-The screen refreshes every 0.75 seconds. Claude token reports update during a call
-when its stream supplies them; Codex reports totals at turn completion. Missing
-counts display as unknown and incomplete totals are labeled partial. Input counts
-include cached tokens without counting them twice. There is no guessed token balance
-or inference from generated text. See [usage reporting](docs/usage.md).
-
-Codex account usage is checked before each MB/RB dispatch and every 60 seconds
-while a live worker is running, without generating model tokens. Claude's reported
-usage/reset events are recorded as they arrive. The worker waits at the configured
-usage threshold or after a limit rejection, using a reported reset when available.
-If Claude supplies no reset, it waits a conservative interval before retrying.
-Unknown usage is shown as unknown, never as a fabricated balance.
-
-A provider may count a request before the client reports its outcome. Interrupted
-requests are recorded as unknown and may consume usage again if retried.
-Other apps share your subscription allowance. No local wrapper can promise exact
-remaining capacity or prevent charges if paid overage is enabled in your account.
-
-Rounds stop at configured time/round limits, sustained qualified approval, a score
-plateau, or a request for human evidence. A higher reviewer score is **not proof**
-of a stronger business. The prompts preserve dissent, uncertainties and experiments
-that could disprove the recommendation.
-
-## Documentation and verification
-
-- [Subscription authentication and billing](docs/subscriptions.md)
-- [Architecture and recovery](docs/architecture.md)
-- [Memory and compaction](docs/memory.md)
-- [Usage reporting](docs/usage.md)
-- [CLI operations](docs/operations.md)
-- [Raspberry Pi deployment](docs/raspberry-pi.md)
-- [Personal cloud server and SSH chat](docs/cloud-server.md)
-- [Validation and milestones](docs/validation.md)
-
-Offline tests exercise orchestration, interruption/resume, mailbox handling,
-stopping conditions, quota events, subprocess protocol contracts, chat interaction,
-long pastes, draft recovery and detached worker reconnection. Small live
-checks passed for both Astra and Opus 5 using the owner's subscription logins.
-A full live research run, real quota-reset cycle and Raspberry Pi deployment
-remain to be verified. See the validation record for exact scope and usage.
+Tests and CI use offline fixtures. Live connectivity checks are separate and
+consume subscription allowance. See [validation](docs/validation.md) for the
+scope of testing, and [architecture](docs/architecture.md) for scheduling,
+recovery and stop conditions. This is a personal-use project; multi-day research
+quality and a real exhaustion/reset cycle still need broader validation.

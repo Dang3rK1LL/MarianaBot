@@ -61,7 +61,6 @@ controls have not been confirmed off.
 - A complete live multi-round business research session.
 - Actual search behavior and citation quality in both native clients.
 - A real subscription-exhaustion/reset cycle across several days.
-- Raspberry Pi installation, service startup, memory use or power-loss recovery.
 - Improved business outcomes compared with a one-shot research baseline.
 
 To evaluate quality, run the same problem once as a baseline and through several
@@ -73,7 +72,7 @@ findings and resolved blockers, not just the judge's score.
 
 1. Foundation and initial architecture: ffbdffa.
 2. Subscription-based three-brain engine and initial offline tests: 79d7e4b.
-3. Resilience improvements, live smoke verification, operations, Pi service and CI:
+3. Resilience improvements, live smoke verification, operations, initial Linux service and CI:
    recorded by the final implementation commit.
 
 4. Durable chat history and managed background workers: 0972831.
@@ -187,3 +186,16 @@ independently. No paid-credit override was used.
 Claude Opus 5 also returned the expected JSON through the server's Claude Pro
 login: 461 input tokens and 9 output tokens. These were short connectivity checks,
 not a full live business-research run or a quota-exhaustion/reset test.
+
+## Version 0.5: setup and model update (September 28, 2026)
+
+The new local setup wizard accepts model IDs and effort choices, retains research
+settings, and requires a fresh billing attestation. New judge defaults are Opus
+5.5 at medium effort; historical runs and the earlier smoke records above retain
+the models actually used. Obsolete deployment files were removed.
+
+81 offline tests passed on Windows. A scan of the 12 existing Git commits found
+no matches for the installation's private addresses, local user path, private-key
+headers or checked credential patterns. This is a bounded check, not proof that
+a repository can never contain sensitive data. Private config, SSH profiles,
+research and optional integration files are excluded from Git.

@@ -24,19 +24,20 @@ a separate Claude OAuth login or proxy subscription credentials for other people
 ## Local setup
 
 1. Install the official Codex CLI and Claude Code for your operating system.
-   Development account checks used Codex 0.154.0 and Claude Code 2.1.257.
+   The VPS has been checked with Codex 0.158.0 and Claude Code 2.1.283.
+   Opus 5.5 requires Claude Code 2.1.280 or newer.
    Older versions may lack flags used by this integration.
 2. Sign in through each client using your existing subscription:
 
 ~~~text
 codex login
-claude auth login
+claude auth login --claudeai
 ~~~
 
 3. Confirm the provider accounts have extra usage/usage-credit spending and
    automatic credit purchases disabled. Already purchased credits may also be
    consumed by the provider after included usage ends. Do not enable paid fallback.
-4. Run mariana init, then mariana doctor. Doctor checks client versions, login
+4. Run `mariana setup`, choose models and efforts, then `mariana doctor`. Doctor checks client versions, login
    types, available Codex models and Codex account quotas. It sends no model prompts.
 5. After checking the billing controls, set subscription.overage_disabled = true
    in mariana.toml. This is your attestation, **not a provider-setting toggle**.
@@ -48,13 +49,16 @@ explicit model fallback are not enabled.
 
 ## Models
 
-MB and RB request gpt-6-astra. JB requests claude-opus-5.
+The defaults are `gpt-6-astra` at high effort for MB/RB and `claude-opus-5-5`
+at medium effort for JB. Choose alternatives during `mariana setup` or `/models`.
+See [Claude model configuration](https://code.claude.com/docs/en/model-config)
+for the Opus 5.5 effort recommendation.
 API availability does not itself establish subscription entitlement.
 
-Doctor verifies Astra appears in your Codex model list. Claude authentication
+Doctor verifies the selected research model appears in your Codex model list. Claude authentication
 metadata does not establish access to an individual model; that is checked during
-the first real request. A model-access failure pauses the run. There is no silent
-substitution. Change the explicit model setting only if you intend that change.
+the first real request. A model-access failure pauses the run. MarianaBot does not request model fallback; provider-side routing remains
+controlled by the provider. Change the explicit model setting only if you intend that change.
 
 ## Quota monitoring
 

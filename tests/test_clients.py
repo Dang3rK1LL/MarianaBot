@@ -44,6 +44,7 @@ def test_subscription_environment_strips_paid_overrides(monkeypatch):
         "OPENAI_BASE_URL",
         "ANTHROPIC_AUTH_TOKEN",
         "CLAUDE_CODE_USE_BEDROCK",
+        "MARIANA_DISCORD_BOT_TOKEN",
     ):
         monkeypatch.setenv(name, "forbidden")
     clean = subscription_env()
@@ -54,6 +55,7 @@ def test_subscription_environment_strips_paid_overrides(monkeypatch):
             "OPENAI_BASE_URL",
             "ANTHROPIC_AUTH_TOKEN",
             "CLAUDE_CODE_USE_BEDROCK",
+            "MARIANA_DISCORD_BOT_TOKEN",
         )
     )
     assert clean["CLAUDE_CODE_DISABLE_FAST_MODE"] == "1"

@@ -17,3 +17,12 @@ mariana-server.json
 *.log
 .coverage
 htmlcov/
+# Personal integrations and provider credentials
+discord.toml
+discord-token.txt
+*.token
+*.key
+*.pem
+.claude/
+.codex/
+.ssh/

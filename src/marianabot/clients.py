@@ -30,6 +30,8 @@ def subscription_env() -> dict[str, str]:
             "CODEX_API_KEY",
             "CLAUDE_CODE_OAUTH_TOKEN",
             "CLAUDECODE",
+            "MARIANA_DISCORD_BOT_TOKEN",
+            "DISCORD_BOT_TOKEN",
         }:
             env.pop(key)
     env.update(

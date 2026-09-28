@@ -92,7 +92,7 @@ Treat backups as confidential and keep official-client credentials separate.
 
 | Symptom | Action |
 |---|---|
-| Configuration missing | Run init, then edit the local file. |
+| Configuration missing | Run mariana setup. |
 | Live run pauses before any call | Check subscription login and the overage-disabled attestation. |
 | Model unavailable | Confirm your plan's access; change the model only intentionally. |
 | Waiting at 95% | The configured threshold protects headroom; inspect the displayed reset. |
@@ -111,13 +111,12 @@ formats; raw client logs are not saved.
 
 ## Explicit live connectivity test
 
-The smoke script is never run by CI or normal startup. It requires explicit
-credit-use acknowledgement, uses low effort, disables search, asks for a tiny
+The smoke script is never run by CI or normal startup. It requires the existing overage-disabled attestation, uses low effort, disables search, asks for a tiny
 JSON response and makes one invocation per selected provider:
 
 ~~~text
-python scripts/live_smoke.py --allow-credit-usage
-python scripts/live_smoke.py --allow-credit-usage --provider openai
+python scripts/live_smoke.py
+python scripts/live_smoke.py --provider anthropic
 ~~~
 
 Claude is given a $0.10 session budget, a 256-token output setting and one agentic

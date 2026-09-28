@@ -36,7 +36,7 @@ checks. Claude allowance reports remain event-driven. See [usage reporting](usag
 ## Research engine
 
 Python 3.11+, asyncio, SQLite WAL, official Codex/Claude Code clients, Rich and Typer.
-The Pi orchestrates cloud models; it does not host model weights.
+Your computer orchestrates provider-hosted models; it does not host model weights.
 
 ## Components
 
@@ -45,8 +45,8 @@ The Pi orchestrates cloud models; it does not host model weights.
 | MB / Astra | Initial brief, questions about progress, owner steering |
 | RB specialists / Astra | Independent proposals covering market, economics and execution |
 | RB chair / Astra | Compare proposals, preserve dissent, synthesize the plan |
-| JB critics / Opus 5 | Independent attacks on evidence, economics and failure modes |
-| JB chair / Opus 5 | Compare critiques, emit validated review JSON and the next RB prompt |
+| JB critics / Opus 5.5 | Independent attacks on evidence, economics and failure modes |
+| JB chair / Opus 5.5 | Compare critiques, emit validated review JSON and the next RB prompt |
 | Engine | Scheduling, checkpoints, stop conditions and controls |
 | Subscription limits | Shared MB/RB usage gate, independent JB gate, durable reset timestamps |
 | Store | Runs, prompts/responses, rounds, commands, events and limits |

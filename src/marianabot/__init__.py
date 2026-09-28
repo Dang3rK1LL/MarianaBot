@@ -1,3 +1,3 @@
-"""MarianaBot: take a problem below the surface."""
+"""Persistent research with independent critique and owner control."""
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"

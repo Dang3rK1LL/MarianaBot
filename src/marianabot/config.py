@@ -46,7 +46,9 @@ class Config(StrictModel):
     subscription: SubscriptionConfig = Field(default_factory=SubscriptionConfig)
     research: ResearchConfig = Field(default_factory=ResearchConfig)
     rb: BrainConfig = Field(default_factory=lambda: BrainConfig(model="gpt-6-astra"))
-    jb: BrainConfig = Field(default_factory=lambda: BrainConfig(model="claude-opus-5"))
+    jb: BrainConfig = Field(
+        default_factory=lambda: BrainConfig(model="claude-opus-5-5", effort="medium")
+    )
 
     @model_validator(mode="after")
     def validate_bounds(self):
@@ -59,7 +61,9 @@ def load_config(path: Path) -> Config:
     return Config.model_validate(tomllib.loads(path.read_text(encoding="utf-8")))
 
 
-def save_model_preferences(path: Path, config: Config, expected_source: str | None):
+def save_model_preferences(
+    path: Path, config: Config, expected_source: str | None, *, overage_disabled: bool | None = None
+):
     """Change only the two model/effort pairs; retain billing settings and comments."""
     current = path.read_text(encoding="utf-8") if path.exists() else None
     if current != expected_source:
@@ -70,6 +74,8 @@ def save_model_preferences(path: Path, config: Config, expected_source: str | No
         "rb": {"model": config.rb.model, "effort": config.rb.effort},
         "jb": {"model": config.jb.model, "effort": config.jb.effort},
     }
+    if overage_disabled is not None:
+        changes["subscription"] = {"overage_disabled": overage_disabled}
     lines, section, pending = [], None, {}
     for line in source.splitlines():
         stripped = line.strip()
@@ -126,8 +132,8 @@ concurrency = 1
 effort = "high"
 
 [jb]
-model = "claude-opus-5"
+model = "claude-opus-5-5"
 agents = 3
 concurrency = 1
-effort = "high"
+effort = "medium"
 """
