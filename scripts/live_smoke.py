@@ -55,11 +55,14 @@ async def main():
     workspace.mkdir(exist_ok=True)
     results = {}
     try:
-        account = await CodexAccount(config, workspace).snapshot(include_models=True)
-        await claude_account(config, workspace)
-        if config.rb.model not in account["models"]:
-            raise ClientError("Astra is not available; no fallback selected")
         providers = ("openai", "anthropic") if args.provider == "both" else (args.provider,)
+        account = None
+        if "openai" in providers:
+            account = await CodexAccount(config, workspace).snapshot(include_models=True)
+            if config.rb.model not in account["models"]:
+                raise ClientError("The configured OpenAI model is unavailable; no fallback selected")
+        if "anthropic" in providers:
+            await claude_account(config, workspace)
         for provider in providers:
             limits = SubscriptionLimits(store, provider, config.subscription)
             if provider == "openai":

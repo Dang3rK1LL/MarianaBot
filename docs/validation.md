@@ -162,7 +162,7 @@ these offline checks. Existing small live smoke results above are unchanged.
 MarianaBot 0.4.1 was installed on Ubuntu 26.04.1, ARM64, with Python 3.14.4,
 Codex CLI 0.158.0 and Claude Code 2.1.283. The original 69-test suite and offline
 two-round demo passed on the VPS. The expanded 79-test suite passed on Windows;
-all 10 new recovery/backup cases also passed on the VPS. CI now includes Python 3.14.
+the full expanded 79-test suite also passed on the VPS. CI now includes Python 3.14.
 
 The dedicated tmux service was verified with the real Textual chat, persistent
 user services and a daily SQLite backup timer. `scripts/check_linux_service.py`
@@ -175,3 +175,8 @@ Database backup validation checks committed WAL data, integrity, restore and
 seven-day retention. Backups are local to the VPS and do not cover disk loss.
 The laptop SSH profile is gitignored; no addresses, private keys, account tokens,
 or real research were added to the repository.
+
+A short VPS request to GPT-6 Astra returned the expected JSON through the saved
+ChatGPT login: 8,757 input tokens and 9 output tokens. The health-check script now
+honors the existing disabled-overage attestation and can check either provider
+independently. No paid-credit override was used.
