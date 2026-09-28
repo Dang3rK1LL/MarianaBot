@@ -14,6 +14,13 @@ confidential material. Keep them in private folders. Official client credentials
 belong in the clients' own storage; never paste them into problems, issues or chat.
 Rotate an exposed credential at its provider even if a leaked file is deleted.
 
+Optional Discord access is limited to one configured server/channel and an
+explicit list of user IDs. Remote control is separately opt-in. Anyone who can
+read that channel can read posted research; the allowlist restricts commands,
+not Discord's channel visibility. Tokens and personal IDs are not distributed
+with the code. Removing the bot stops future delivery, not previously posted
+messages. See [Discord setup](docs/discord.md).
+
 Model requests go through the installed official clients. MarianaBot removes
 API-key and integration-token overrides from their environment, uses restricted
 client tool configurations and passes prompts through stdin, not shell commands.

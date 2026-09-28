@@ -199,3 +199,22 @@ no matches for the installation's private addresses, local user path, private-ke
 headers or checked credential patterns. This is a bounded check, not proof that
 a repository can never contain sensitive data. Private config, SSH profiles,
 research and optional integration files are excluded from Git.
+
+## Optional Discord foundation (September 28, 2026)
+
+94 offline tests passed on Windows, including 13 Discord cases covering denied
+users/channels/DMs, disabled controls, duplicate and uncertain requests, durable
+outbox retries/restart, explicit watch/unwatch, private configuration, truthful
+metrics, and SDK acknowledgement/mention handling. A detached offline worker
+answered an MB question while leaving its research paused. The base CLI was
+checked without importing the optional SDK. Adapter tests used discord.py 2.7.1.
+
+Discord has not been connected to a real account or server. The integration
+requires each user's own private configuration, token and explicit watch choice.
+It has no default remote destination and no automatic service installation.
+Notification delivery can duplicate after a crash between remote acceptance
+and local acknowledgement; uncertain control requests are not replayed blindly.
+
+The laptop's official Claude Code was updated from 2.1.257 to 2.1.283 for Opus 5.5.
+The public defaults and owner's local new-run preferences use Opus 5.5/medium.
+Previous research records are unchanged.

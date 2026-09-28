@@ -16,6 +16,7 @@ from rich.text import Text
 
 from marianabot.clients import ClientError, CodexAccount, capture, claude_account, executable
 from marianabot.config import DEFAULT_TOML, Config, load_config
+from marianabot.discord_cli import app as discord_app
 from marianabot.engine import Engine
 from marianabot.reports import export_run
 from marianabot.store import Store
@@ -27,6 +28,7 @@ app = typer.Typer(
     invoke_without_command=True,
     pretty_exceptions_enable=False,
 )
+app.add_typer(discord_app, name="discord")
 # Windows redirected terminals can default to cp1250; render Unicode safely.
 for stream in (sys.stdout, sys.stderr):
     if hasattr(stream, "reconfigure"):

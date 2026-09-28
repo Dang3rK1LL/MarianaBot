@@ -110,7 +110,11 @@ business and action plan with evidence, assumptions, unit economics with ranges,
 risks, phased actions, owners, dependencies, dates relative to start, success metrics,
 kill criteria and the next real-world tests. Address every previous blocking issue:
 resolved with evidence, rejected with justification, or still open. A previous score
-is not evidence of quality. Do not equate model agreement with validation."""
+is not evidence of quality. Do not equate model agreement with validation.
+Begin with three short sections using these exact headings: ## Round summary,
+## Changes this round, ## Next direction. Explain what you investigated, what
+changed from the previous plan (or that this is the first plan), and the next
+priority. Then provide the complete standalone plan. Do not invent a prior round."""
 
 JUDGE = """JUDGE_JSON: Act as the JB chair. Compare the independent critiques, distinguish
 valid objections from speculation, and evaluate evidence quality, economic viability,

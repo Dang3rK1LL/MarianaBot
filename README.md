@@ -141,10 +141,19 @@ Public source code does not publish your running installation. Git exclusions
 are an accident-prevention measure, not access control: keep research, backups,
 SSH keys and client credentials private. Read the [security notes](SECURITY.md).
 
+## Optional Discord connection
+
+Follow rounds and talk to MB from your own private Discord channel. The optional
+integration supports `/mariana ask`, `steer`, `pause`, `resume` and status updates.
+You create your own bot, choose allowed users, and explicitly select which run to
+share. It is disabled by default, with private credentials kept outside Git.
+Follow the [Discord setup guide](docs/discord.md). The first version is tested
+offline; connecting a real bot is a separate setup step.
+
 ## Development
 
 ```text
-python -m pip install -e ".[dev]"
+python -m pip install -e ".[dev,discord]"
 python -m ruff check src tests scripts
 python -m ruff format --check src tests scripts
 python -m pytest -q

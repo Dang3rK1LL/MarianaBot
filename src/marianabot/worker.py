@@ -13,6 +13,7 @@ from pathlib import Path
 
 from filelock import FileLock, Timeout
 
+from marianabot.clients import subscription_env
 from marianabot.engine import Engine, Halt
 from marianabot.reports import export_run
 from marianabot.store import Store
@@ -132,6 +133,7 @@ class WorkerManager:
                         stdout=output,
                         stderr=output,
                         cwd=self.directory,
+                        env=subscription_env(),
                         **options,
                     )
                 self.children.append(process)
