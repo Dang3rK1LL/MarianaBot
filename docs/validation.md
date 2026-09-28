@@ -169,7 +169,10 @@ user services and a daily SQLite backup timer. `scripts/check_linux_service.py`
 creates an isolated temporary service and offline demo database. It verified
 startup, graceful interruption, service restart, reuse of completed checkpoints,
 and preservation of an explicit owner pause. It does not use either provider.
-This is a service-restart test, not an actual VPS reboot test.
+An actual VPS reboot was then checked with no active research: the terminal service
+and backup timer started automatically, both subscription logins remained valid,
+and the Windows shortcut reopened chat. Recovery of active research was verified
+with the isolated service-restart test above.
 
 Database backup validation checks committed WAL data, integrity, restore and
 seven-day retention. Backups are local to the VPS and do not cover disk loss.
@@ -180,3 +183,7 @@ A short VPS request to GPT-6 Astra returned the expected JSON through the saved
 ChatGPT login: 8,757 input tokens and 9 output tokens. The health-check script now
 honors the existing disabled-overage attestation and can check either provider
 independently. No paid-credit override was used.
+
+Claude Opus 5 also returned the expected JSON through the server's Claude Pro
+login: 461 input tokens and 9 output tokens. These were short connectivity checks,
+not a full live business-research run or a quota-exhaustion/reset test.
