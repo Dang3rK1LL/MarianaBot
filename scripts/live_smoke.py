@@ -60,7 +60,9 @@ async def main():
         if "openai" in providers:
             account = await CodexAccount(config, workspace).snapshot(include_models=True)
             if config.rb.model not in account["models"]:
-                raise ClientError("The configured OpenAI model is unavailable; no fallback selected")
+                raise ClientError(
+                    "The configured OpenAI model is unavailable; no fallback selected"
+                )
         if "anthropic" in providers:
             await claude_account(config, workspace)
         for provider in providers:
