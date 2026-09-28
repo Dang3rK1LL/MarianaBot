@@ -1,0 +1,7 @@
+[Unit]
+Description=Back up MarianaBot's research database
+
+[Service]
+Type=oneshot
+UMask=0077
+ExecStart=%h/MarianaBot/.venv/bin/python -m marianabot.server backup --data-dir %h/.local/share/marianabot --destination %h/.local/share/marianabot-backups

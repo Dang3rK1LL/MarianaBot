@@ -189,6 +189,7 @@ that could disprove the recommendation.
 - [Usage reporting](docs/usage.md)
 - [CLI operations](docs/operations.md)
 - [Raspberry Pi deployment](docs/raspberry-pi.md)
+- [Personal cloud server and SSH chat](docs/cloud-server.md)
 - [Validation and milestones](docs/validation.md)
 
 Offline tests exercise orchestration, interruption/resume, mailbox handling,

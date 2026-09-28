@@ -1,0 +1,24 @@
+[Unit]
+Description=MarianaBot persistent terminal and research processes
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=exec
+WorkingDirectory=%h/MarianaBot
+Environment=PATH=%h/.local/bin:%h/MarianaBot/.venv/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONUTF8=1
+Environment=TERM=xterm-256color
+UMask=0077
+ExecStart=/usr/bin/tmux -D -L marianabot -f %h/MarianaBot/deploy/tmux.conf
+ExecStartPost=%h/MarianaBot/.venv/bin/python -m marianabot.server recover --data-dir %h/.local/share/marianabot
+Restart=on-failure
+RestartSec=30
+TimeoutStopSec=30
+KillMode=control-group
+
+[Install]
+WantedBy=default.target

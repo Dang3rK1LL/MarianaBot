@@ -156,3 +156,22 @@ at 120×40 and 80×24, including the model dialog and current-run settings.
 Real-model compaction quality across a week, provider support for newly entered
 model/effort combinations and long-running quota reset behavior remain outside
 these offline checks. Existing small live smoke results above are unchanged.
+
+## Ubuntu VPS deployment · 2026-09-28
+
+MarianaBot 0.4.1 was installed on Ubuntu 26.04.1, ARM64, with Python 3.14.4,
+Codex CLI 0.158.0 and Claude Code 2.1.283. The original 69-test suite and offline
+two-round demo passed on the VPS. The expanded 79-test suite passed on Windows;
+all 10 new recovery/backup cases also passed on the VPS. CI now includes Python 3.14.
+
+The dedicated tmux service was verified with the real Textual chat, persistent
+user services and a daily SQLite backup timer. `scripts/check_linux_service.py`
+creates an isolated temporary service and offline demo database. It verified
+startup, graceful interruption, service restart, reuse of completed checkpoints,
+and preservation of an explicit owner pause. It does not use either provider.
+This is a service-restart test, not an actual VPS reboot test.
+
+Database backup validation checks committed WAL data, integrity, restore and
+seven-day retention. Backups are local to the VPS and do not cover disk loss.
+The laptop SSH profile is gitignored; no addresses, private keys, account tokens,
+or real research were added to the repository.

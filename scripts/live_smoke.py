@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from marianabot.clients import ClientError, CodexAccount, NativeClient, claude_account
-from marianabot.config import Config
+from marianabot.config import load_config
 from marianabot.limits import SubscriptionLimits
 from marianabot.store import Store
 
@@ -38,12 +38,14 @@ async def main():
         help="Explicitly allow this test when provider usage credits are enabled",
     )
     parser.add_argument("--provider", choices=("both", "openai", "anthropic"), default="both")
+    parser.add_argument("--config", type=Path, default=Path("mariana.toml"))
     args = parser.parse_args()
-    if not args.allow_credit_usage:
+    config = load_config(args.config)
+    if not config.subscription.overage_disabled and not args.allow_credit_usage:
         parser.error(
-            "This live script requires --allow-credit-usage; it may consume subscription/usage credits."
+            "Confirm disabled overage in mariana.toml before live testing. "
+            "Only use --allow-credit-usage if you explicitly intend paid credit usage."
         )
-    config = Config()
     config.rb.effort = config.jb.effort = "low"
     config.research.request_timeout_seconds = 120
     os.environ["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = "256"
