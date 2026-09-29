@@ -21,6 +21,12 @@ not Discord's channel visibility. Tokens and personal IDs are not distributed
 with the code. Removing the bot stops future delivery, not previously posted
 messages. See [Discord setup](docs/discord.md).
 
+Startup updates trust code published to the official repository's `main` branch.
+They require a clean checkout, retain private files and validate a separate
+runtime before activation. They do not turn an untrusted fork into a trusted
+installation. Disable `[updates] enabled` if you want to review updates manually;
+see [update behavior and controls](docs/updates.md).
+
 Model requests go through the installed official clients. MarianaBot removes
 API-key and integration-token overrides from their environment, uses restricted
 client tool configurations and passes prompts through stdin, not shell commands.

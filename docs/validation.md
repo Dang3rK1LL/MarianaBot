@@ -243,3 +243,17 @@ The laptop passed 94 offline tests and its Codex subscription check. Its updated
 Claude client reports signed out both directly and through MarianaBot; local
 live use needs `claude auth login --claudeai`. Server use does not depend on the
 laptop's Claude login. No credential files were read or copied to resolve this.
+
+## Version 0.6: automatic startup updates (September 29, 2026)
+
+115 offline tests passed on Windows, including 21 updater cases. They cover
+fast-forward activation, local edits/untracked files/diverged branches, custom
+remotes, active workers/chat/Discord, competing launches, failed builds and
+network requests, changes during preparation, activation errors, private-file
+preservation, timeouts and handoff to the selected environment.
+
+A separate disposable-checkout integration check built a real isolated virtual
+environment, installed the current package and optional Discord dependency,
+validated it, advanced the checkout, launched the prepared runtime and completed
+offline demo research. This downloaded Python packages but made no model calls.
+Application settings and a synthetic private token file remained unchanged.

@@ -93,6 +93,10 @@ directory; **the bot and terminal chat must use the same directory on the same
 host**. It cannot discover research on another computer. One bot process may own
 a research directory at a time.
 
+Bot startup follows MarianaBot's [automatic update settings](updates.md). A
+running bot defers application updates until it exits. Its private configuration
+and token are preserved; an update does not enable a disabled integration.
+
 In your private Discord channel:
 
 ```text

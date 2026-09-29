@@ -103,10 +103,16 @@ systemctl --user start marianabot-backup.service
 mariana doctor
 ```
 
-For an update, `/pause` first, stop `marianabot-terminal`, back up the database and
-configuration, pull the new code and reinstall into `.venv`. Copy updated service
-files, reload systemd, start the service and run doctor. Reopen chat and `/resume`
-when ready. An expired provider login must be renewed using its official client.
+Application updates are checked automatically before connecting and at service
+startup. They install only when no chat, Discord bot or research worker is using
+the installation. To apply a pending update, `/pause`, wait for the worker to
+finish, `/quit`, and reconnect. See [startup updates](updates.md).
+
+For manual maintenance or changes to systemd unit definitions, `/pause` first,
+stop `marianabot-terminal`, back up the database and configuration, pull the new
+code and reinstall into `.venv`. Copy updated service files, reload systemd,
+start the service and run doctor. Reopen chat and `/resume` when ready. An expired
+provider login must be renewed using its official client.
 
 Official client references (checked September 28, 2026):
 [Codex installation](https://learn.chatgpt.com/docs/cli),

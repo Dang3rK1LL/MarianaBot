@@ -45,6 +45,7 @@ def main():
         )
         content = (root / "deploy/marianabot-terminal.service").read_text(encoding="utf-8")
         content = content.replace("%h/.local/share/marianabot", str(directory))
+        content = content.replace("[Service]", "[Service]\nEnvironment=MARIANA_AUTO_UPDATE=0")
         content = content.replace("%h/MarianaBot", str(root))
         content = content.replace("-L marianabot", "-L " + name)
         unit.write_text(content, encoding="utf-8")

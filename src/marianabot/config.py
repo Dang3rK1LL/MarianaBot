@@ -42,7 +42,12 @@ class ResearchConfig(StrictModel):
     max_retries: int = Field(default=3, ge=0, le=12)
 
 
+class UpdateConfig(StrictModel):
+    enabled: bool = True
+
+
 class Config(StrictModel):
+    updates: UpdateConfig = Field(default_factory=UpdateConfig)
     subscription: SubscriptionConfig = Field(default_factory=SubscriptionConfig)
     research: ResearchConfig = Field(default_factory=ResearchConfig)
     rb: BrainConfig = Field(default_factory=lambda: BrainConfig(model="gpt-6-astra"))
@@ -103,6 +108,10 @@ def save_model_preferences(
 
 
 DEFAULT_TOML = """# Official clients and subscription logins only. No API billing.
+[updates]
+# Check GitHub and install validated application updates at startup when idle.
+enabled = true
+
 [subscription]
 # Set true ONLY after disabling extra usage and automatic credit purchases
 # in both accounts. MarianaBot cannot change or verify these billing settings.

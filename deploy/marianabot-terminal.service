@@ -13,8 +13,10 @@ Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONUTF8=1
 Environment=TERM=xterm-256color
 UMask=0077
+ExecStartPre=%h/MarianaBot/.venv/bin/python -m marianabot.updater --startup --data-dir %h/.local/share/marianabot
 ExecStart=/usr/bin/tmux -D -L marianabot -f %h/MarianaBot/deploy/tmux.conf
-ExecStartPost=%h/MarianaBot/.venv/bin/python -m marianabot.server recover --data-dir %h/.local/share/marianabot
+ExecStartPost=%h/MarianaBot/.venv/bin/python -m marianabot --service recover --data-dir %h/.local/share/marianabot
+TimeoutStartSec=480
 Restart=on-failure
 RestartSec=30
 TimeoutStopSec=30

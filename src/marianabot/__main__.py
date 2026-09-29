@@ -1,3 +1,3 @@
-from marianabot.cli import app
+from marianabot.bootstrap import main
 
-app()
+main()

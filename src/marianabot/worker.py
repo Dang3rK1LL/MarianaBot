@@ -16,6 +16,7 @@ from filelock import FileLock, Timeout
 from marianabot.clients import subscription_env
 from marianabot.engine import Engine, Halt
 from marianabot.reports import export_run
+from marianabot.runtime import installation_lease
 from marianabot.store import Store
 
 
@@ -220,4 +221,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    with installation_lease():
+        main()

@@ -12,6 +12,7 @@ build/
 mariana.toml
 mariana-server.json
 .mariana/
+.mariana-updates/
 *.sqlite*
 *.db*
 *.log

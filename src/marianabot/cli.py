@@ -42,13 +42,34 @@ DEFAULT_DATA = Path(".mariana")
 
 
 @app.callback()
-def main(ctx: typer.Context):
+def main(
+    ctx: typer.Context,
+    no_update: Annotated[
+        bool, typer.Option("--no-update", help="Skip the startup update check.")
+    ] = False,
+):
     """Open interactive chat, or choose a command for scripting."""
     if ctx.invoked_subcommand is None:
         if not sys.stdin.isatty():
             console.print(ctx.get_help())
             return
         chat()
+
+
+@app.command("update")
+def update_command(
+    check: bool = False, config: Path = Path("mariana.toml"), data_dir: DataDir = DEFAULT_DATA
+):
+    """Check for updates, or install a validated update when this installation is idle."""
+    from marianabot.runtime import installation_root
+    from marianabot.updater import update
+
+    root = installation_root()
+    if root is None:
+        console.print("Automatic updates require a Git checkout. Use your package installer.")
+        return
+    result = update(root, config=config, data_dir=data_dir, check_only=check)
+    console.print(Text(result.message))
 
 
 @app.command()

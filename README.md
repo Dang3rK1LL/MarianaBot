@@ -150,6 +150,18 @@ share. It is disabled by default, with private credentials kept outside Git.
 Follow the [Discord setup guide](docs/discord.md). The first version is tested
 offline; connecting a real bot is a separate setup step.
 
+## Automatic updates
+
+MarianaBot checks GitHub on startup and installs available updates when the
+installation is idle. It prepares and checks a separate environment before
+switching versions. Running research, open chat, Discord, or local source edits
+defer installation; a failed download or package install keeps the existing
+version available. Your settings, credentials and research stay in place.
+
+Use `mariana update --check` to check manually, `mariana --no-update` to skip one
+startup check, or `[updates] enabled = false` in `mariana.toml` to disable it.
+Laptop and VPS installations update independently. See [startup updates](docs/updates.md).
+
 ## Development
 
 ```text

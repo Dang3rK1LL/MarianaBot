@@ -5,5 +5,5 @@ if not exist ".venv\Scripts\python.exe" (
   pause
   exit /b 1
 )
-".venv\Scripts\python.exe" scripts\connect_server.py
+".venv\Scripts\python.exe" -m marianabot.bootstrap --connect-server
 if errorlevel 1 pause
