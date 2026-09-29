@@ -88,7 +88,7 @@ def git(root: Path, *args: str, timeout=20) -> str:
             "-c",
             f"safe.directory={root.as_posix()}",
             "-c",
-            "core.hooksPath=",
+            "core.hooksPath=/dev/null",
             "-C",
             str(root),
             *args,

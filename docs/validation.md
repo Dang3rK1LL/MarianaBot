@@ -257,3 +257,15 @@ environment, installed the current package and optional Discord dependency,
 validated it, advanced the checkout, launched the prepared runtime and completed
 offline demo research. This downloaded Python packages but made no model calls.
 Application settings and a synthetic private token file remained unchanged.
+
+The first updater code milestone `191ddd9` passed all six CI jobs across Windows
+and Ubuntu on Python 3.11, 3.13 and 3.14. On the actual ARM64 VPS, 114 offline
+tests passed and the optional Discord SDK test was skipped. The real staged
+installer and offline demo also passed there without installing Discord, and
+the systemd/tmux recovery check passed startup, interruption, checkpoint reuse
+and deliberate-pause preservation. Updated launchers and service units were
+installed on the VPS; the Windows console entry point was reinstalled as well.
+
+A final regression check covers a Git hook-named file in the checkout. Updater
+Git commands use Git's documented per-command hook-disable setting. The updater
+suite now has 22 cases; no test contacts a model provider.

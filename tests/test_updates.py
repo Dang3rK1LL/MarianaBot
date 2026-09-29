@@ -98,6 +98,18 @@ def test_check_only_does_not_prepare_or_change_installation(repo, monkeypatch):
     assert updater.read_state(repo.root) is None
 
 
+def test_update_does_not_execute_a_hook_from_the_checkout(repo, monkeypatch):
+    hook = repo.remote / "post-merge"
+    hook.write_text("#!/bin/sh\necho unexpected > .mariana/hook-ran\n", encoding="utf-8")
+    hook.chmod(0o755)
+    git(repo.remote, "add", "post-merge")
+    git(repo.remote, "update-index", "--chmod=+x", "post-merge")
+    git(repo.remote, "commit", "-m", "Fixture with a hook-named file")
+    monkeypatch.setattr(updater, "prepare_environment", prepare)
+    assert update(repo).state == "updated"
+    assert not (repo.root / ".mariana/hook-ran").exists()
+
+
 @pytest.mark.parametrize("kind", ["tracked", "untracked", "branch", "diverged", "remote"])
 def test_local_work_and_untrusted_remotes_are_never_overwritten(repo, monkeypatch, kind):
     monkeypatch.setattr(
