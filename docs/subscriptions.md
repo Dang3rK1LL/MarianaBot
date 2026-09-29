@@ -24,7 +24,6 @@ a separate Claude OAuth login or proxy subscription credentials for other people
 ## Local setup
 
 1. Install the official Codex CLI and Claude Code for your operating system.
-   The VPS has been checked with Codex 0.158.0 and Claude Code 2.1.283.
    Opus 5.5 requires Claude Code 2.1.280 or newer.
    Older versions may lack flags used by this integration.
 2. Sign in through each client using your existing subscription:
@@ -37,11 +36,12 @@ claude auth login --claudeai
 3. Confirm the provider accounts have extra usage/usage-credit spending and
    automatic credit purchases disabled. Already purchased credits may also be
    consumed by the provider after included usage ends. Do not enable paid fallback.
-4. Run `mariana setup`, choose models and efforts, then `mariana doctor`. Doctor checks client versions, login
-   types, available Codex models and Codex account quotas. It sends no model prompts.
-5. After checking the billing controls, set subscription.overage_disabled = true
-   in mariana.toml. This is your attestation, **not a provider-setting toggle**.
-6. Create a problem and run it.
+4. Run `mariana setup`, choose models and efforts, and confirm the billing controls
+   you checked. Setup records `subscription.overage_disabled = true` in
+   `mariana.toml`. This is your attestation, **not a provider-setting toggle**.
+5. Run `mariana doctor`. It checks client versions, login types, available Codex
+   models and Codex account quotas without sending model prompts.
+6. Open `mariana` and describe your problem.
 
 API keys in the environment are removed for child clients. Claude safe mode avoids
 custom API-key helpers; Codex explicitly requires a ChatGPT login. Fast mode and
@@ -82,11 +82,8 @@ is retained for diagnostics. That estimate is **not a subscription charge**.
 
 ## Scope of verification
 
-Both installed client logins were checked without inference. Codex listed Astra
-and Claude reported a Pro plan. Subsequently, the owner authorized a small live
-check and both Astra and Opus 5 returned the expected JSON. See validation.md for
-token usage. Full research quality, native web-search behavior and a real
-exhaustion/reset cycle remain unverified.
+See the [testing guide](testing.md#live-verification) for the scope and limits of
+live verification. Model access and allowance depend on your own account.
 
 Provider-side overage controls are necessary for the no-additional-spend intent.
 The wrapper cannot inspect every billing switch, guarantee a request fits the

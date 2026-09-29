@@ -80,8 +80,8 @@ completed rounds, specialist outputs and answered owner dialogue.
 
 Current briefs, owner messages and protected notes bypass compaction. Review
 blockers, dissent and requested human tests are automatically protected; owner
-pins are explicit. Exhausting the protected context pauses the run. The production
-engine no longer uses per-field truncation as a fallback. Memory is a fallible
+pins are explicit. Exhausting the protected context pauses the run instead of
+truncating protected fields. Memory is a fallible
 summary with original archives, not arbitrary retrieval or perfect recall. See
 [memory and compaction](memory.md).
 

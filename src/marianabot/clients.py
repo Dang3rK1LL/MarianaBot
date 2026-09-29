@@ -9,6 +9,7 @@ import signal
 import subprocess
 from pathlib import Path
 
+from marianabot import __version__
 from marianabot.config import Config
 from marianabot.limits import SubscriptionLimits
 from marianabot.usage import UsageStream
@@ -175,7 +176,9 @@ class CodexAccount:
 
         try:
             async with asyncio.timeout(40):
-                await rpc("initialize", {"clientInfo": {"name": "marianabot", "version": "0.1.0"}})
+                await rpc(
+                    "initialize", {"clientInfo": {"name": "marianabot", "version": __version__}}
+                )
                 await send({"method": "initialized", "params": {}})
                 account = await rpc("account/read", {"refreshToken": True})
                 account_data = account.get("account") or {}

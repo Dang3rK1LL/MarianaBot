@@ -111,5 +111,5 @@ The demo uses clearly labeled fixtures. Normal chat also supports `/demo`, then
 `/new` to return to the normal mode. For a new installation, follow the one-time
 setup in [README](../README.md) and [subscription setup](subscriptions.md).
 
-The original `mariana new`, `run`, `ask`, and other shell commands still work for
-automation. See [CLI operations](operations.md) for those commands and diagnostics.
+Use `mariana new`, `run`, `ask`, and the other shell commands for automation.
+See [CLI operations](operations.md) for those commands and diagnostics.

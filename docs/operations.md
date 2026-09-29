@@ -10,7 +10,7 @@ accept --data-dir; always use the same path for the worker and control terminals
 ## Preparing a useful problem
 
 A good initial brief names the decision, customers/geography, resources, constraints,
-time horizon and evidence already available. See examples/problem.md.
+time horizon and evidence already available. See the [example brief](../examples/problem.md).
 The initial problem is limited to 100,000 characters. MB identifies missing
 information and working assumptions. Read its response with messages, then send
 clarifications with steer.
@@ -98,7 +98,7 @@ Treat backups as confidential and keep official-client credentials separate.
 | Waiting at 95% | The configured threshold protects headroom; inspect the displayed reset. |
 | Claude usage unknown | No complete quota event has arrived; a limit rejection still schedules a wait. |
 | Pauses on billing/credit error | Review account settings; this is not treated as a temporary quota reset. |
-| Client fails after an update | Run doctor and compare versions with docs/validation.md. |
+| Client fails after an update | Run `mariana doctor` and check the [subscription setup](subscriptions.md) for client requirements. |
 | Invalid judge JSON | Completed specialists remain cached; resume permits a fresh chair attempt. |
 | Human-evidence pause | Queue the new evidence with steer, then resume. |
 | Completed due to time limit | Create a new run from the exported plan. |

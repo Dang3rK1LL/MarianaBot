@@ -147,8 +147,7 @@ Follow rounds and talk to MB from your own private Discord channel. The optional
 integration supports `/mariana ask`, `steer`, `pause`, `resume` and status updates.
 You create your own bot, choose allowed users, and explicitly select which run to
 share. It is disabled by default, with private credentials kept outside Git.
-Follow the [Discord setup guide](docs/discord.md). The first version is tested
-offline; connecting a real bot is a separate setup step.
+Follow the [Discord setup guide](docs/discord.md).
 
 ## Automatic updates
 
@@ -172,7 +171,7 @@ python -m pytest -q
 ```
 
 Tests and CI use offline fixtures. Live connectivity checks are separate and
-consume subscription allowance. See [validation](docs/validation.md) for the
-scope of testing, and [architecture](docs/architecture.md) for scheduling,
+consume subscription allowance. See [testing](docs/testing.md) for coverage and
+development tools, and [architecture](docs/architecture.md) for scheduling,
 recovery and stop conditions. This is a personal-use project; multi-day research
 quality and a real exhaustion/reset cycle still need broader validation.
