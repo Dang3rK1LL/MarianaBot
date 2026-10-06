@@ -40,6 +40,18 @@ def make_review(**changes):
     )
 
 
+def test_recap_handles_plans_without_stage_summaries():
+    text = card_text(
+        recap_card(
+            make_run(),
+            dict(number=1, plan="Legacy plan @everyone", review=make_review()),
+            {},
+        )
+    )
+    assert "Plan excerpt" in text and "No separate change summary recorded" in text
+    assert "@everyone" not in text
+
+
 def test_recap_reports_actual_changes_review_delta_and_owner_tests():
     plan = "## Round summary\nCompared two buyer segments.\n## Changes this round\nReduced the pilot from 20 customers to five.\n## Next direction\nCollect paid commitments.\n## Plan\nPrivate extended detail."
     embed = recap_card(

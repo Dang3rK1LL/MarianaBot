@@ -134,7 +134,7 @@ code and reinstall into `.venv`. Copy updated service files, reload systemd,
 start the service and run doctor. Reopen chat and `/resume` when ready. An expired
 provider login must be renewed using its official client.
 
-Official client references (checked September 28, 2026):
+Official client references:
 [Codex installation](https://learn.chatgpt.com/docs/cli),
 [Codex headless login](https://learn.chatgpt.com/docs/auth#login-on-headless-devices),
 [Claude installation](https://code.claude.com/docs/en/setup),

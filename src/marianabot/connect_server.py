@@ -1,6 +1,5 @@
 """Open the VPS chat using a private, local SSH connection profile."""
 
-import argparse
 import json
 import os
 import re
@@ -10,7 +9,7 @@ from pathlib import Path
 from marianabot.runtime import installation_root
 
 
-def main(*, discord_setup=False):
+def main():
     profile = (installation_root() or Path.cwd()) / "mariana-server.json"
     try:
         config = json.loads(profile.read_text(encoding="utf-8"))
@@ -40,9 +39,7 @@ def main(*, discord_setup=False):
                 "-o",
                 "ServerAliveCountMax=3",
                 f"{user}@{host}",
-                "/usr/bin/bash ~/MarianaBot/deploy/discord-setup-linux.sh"
-                if discord_setup
-                else "~/.local/bin/mariana",
+                "~/.local/bin/mariana",
             ],
             env=environment,
         )
@@ -52,7 +49,4 @@ def main(*, discord_setup=False):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--discord-setup", action="store_true")
-    args = parser.parse_args()
-    raise SystemExit(main(discord_setup=args.discord_setup))
+    raise SystemExit(main())

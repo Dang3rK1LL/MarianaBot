@@ -44,16 +44,17 @@ Your computer orchestrates provider-hosted models; it does not host model weight
 
 | Component | Responsibility |
 |---|---|
-| MB / Astra | Initial brief, questions about progress, owner steering |
-| RB specialists / Astra | Independent proposals covering market, economics and execution |
-| RB chair / Astra | Compare proposals, preserve dissent, synthesize the plan |
-| JB critics / Opus 5.5 | Independent attacks on evidence, economics and failure modes |
-| JB chair / Opus 5.5 | Compare critiques, emit validated review JSON and the next RB prompt |
+| MB | Initial brief, questions about progress, owner steering |
+| RB specialists | Independent proposals covering market, economics and execution |
+| RB chair | Compare proposals, preserve dissent, synthesize the plan |
+| JB critics | Independent attacks on evidence, economics and failure modes |
+| JB chair | Compare critiques, emit validated review JSON and the next RB prompt |
 | Engine | Scheduling, checkpoints, stop conditions and controls |
 | Subscription limits | Shared MB/RB usage gate, independent JB gate, durable reset timestamps |
 | Store | Runs, prompts/responses, rounds, commands, events and limits |
 | CLI | Dashboard, owner mailbox, pause/resume/stop and exports |
 
+MB and RB use the configured research model; JB uses the configured judge model.
 Subagents are separate official-client invocations with distinct role prompts and
 contexts. The Python scheduler controls their count and concurrency; no hidden
 recursive model delegation is required. Chairs receive all specialist contributions

@@ -32,9 +32,7 @@ def excerpt(value: str, limit: int) -> str:
     )
 
 
-def status_text(
-    store: Store, run_id: str, *, now: float | None = None, include_models: bool = True
-) -> str:
+def status_text(store: Store, run_id: str, *, now: float | None = None) -> str:
     run = store.run(run_id)
     config = Config.model_validate_json(run["config"])
     now = time.time() if now is None else now
@@ -48,11 +46,8 @@ def status_text(
     lines = [
         f"Run {run_id} · {run['status']} · round {run['round']}",
         f"Elapsed since creation: {duration(now - run['created'])} (includes waits/pauses)",
+        f"RB/MB: {config.rb.model} / {config.rb.effort}; JB: {config.jb.model} / {config.jb.effort}",
     ]
-    if include_models:
-        lines.append(
-            f"RB/MB: {config.rb.model} / {config.rb.effort}; JB: {config.jb.model} / {config.jb.effort}"
-        )
     if run["reason"]:
         lines.append("State: " + excerpt(run["reason"], 160))
     for provider, label in (("openai", "ChatGPT"), ("anthropic", "Claude")):
@@ -78,16 +73,6 @@ def status_text(
 def usage_snapshot(store: Store, run_id: str) -> dict:
     return dict(
         usage=store.usage_totals(run_id), elapsed=time.time() - store.run(run_id)["created"]
-    )
-
-
-def round_text(store: Store, run_id: str, row: dict, *, snapshot: dict | None = None) -> str:
-    return card_text(
-        recap_card(
-            store.run(run_id),
-            row,
-            snapshot if snapshot is not None else usage_snapshot(store, run_id),
-        )
     )
 
 

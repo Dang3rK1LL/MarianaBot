@@ -102,7 +102,7 @@ Treat backups as confidential and keep official-client credentials separate.
 | Live run pauses before any call | Check subscription login and the overage-disabled attestation. |
 | Model unavailable | Confirm your plan's access; change the model only intentionally. |
 | Waiting at 95% | The configured threshold protects headroom; inspect the displayed reset. |
-| Claude usage unknown | No complete quota event has arrived; a limit rejection still schedules a wait. |
+| Account allowance unknown or stale | Use `/usage` in chat to refresh both providers; check client logins and connectivity. See [usage reporting](usage.md). |
 | Pauses on billing/credit error | Review account settings; this is not treated as a temporary quota reset. |
 | Client fails after an update | Run `mariana doctor` and check the [subscription setup](subscriptions.md) for client requirements. |
 | Invalid judge JSON | Completed specialists remain cached; resume permits a fresh chair attempt. |

@@ -7,6 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
@@ -69,7 +71,7 @@ def load_config(path: Path) -> Config:
 def save_model_preferences(
     path: Path, config: Config, expected_source: str | None, *, overage_disabled: bool | None = None
 ):
-    """Change only the two model/effort pairs; retain billing settings and comments."""
+    """Save model choices and optional billing attestation while retaining other settings."""
     current = path.read_text(encoding="utf-8") if path.exists() else None
     if current != expected_source:
         raise ValueError("Configuration changed on disk. Reopen /models before saving.")

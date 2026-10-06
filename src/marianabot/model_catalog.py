@@ -5,9 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from marianabot.clients import ClientError, CodexAccount, claude_models
-from marianabot.config import Config
-
-EFFORTS = ("low", "medium", "high", "xhigh", "max")
+from marianabot.config import EFFORTS, Config
 
 
 @dataclass(frozen=True)

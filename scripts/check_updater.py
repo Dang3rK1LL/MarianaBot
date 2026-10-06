@@ -10,10 +10,7 @@ from pathlib import Path
 
 from marianabot import updater
 from marianabot.config import DEFAULT_TOML
-
-
-def git(root, *args):
-    return updater.git(root, *args)
+from marianabot.updater import git
 
 
 def main():

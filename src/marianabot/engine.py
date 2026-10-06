@@ -257,7 +257,7 @@ class Engine:
             if task != "mb-intake":
                 data = data | self.memory.context()
             data = await self.memory.prepare(data, max_chars)
-        content = prompt(instruction, data, max_chars, actual_search, strict=True)
+        content = prompt(instruction, data, max_chars, actual_search)
         attempt = 0
         while True:
             async with self.gates[provider]:

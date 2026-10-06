@@ -100,6 +100,7 @@ Type normally to ask MB a question. Type `/` to see commands:
 | `/stop` | Permanently ends this research run |
 | `/sessions` / `/new` | Opens saved research or starts a new draft |
 | `/models` | Changes models and efforts for new research |
+| `/usage` | Refreshes account allowance and shows the full usage snapshot |
 | `/memory` / `/pin exact wording` | Inspects memory or protects an instruction from summarization |
 | `/export` | Writes the plan, transcript, history, memory and cited links |
 | `/quit` | Closes chat while background research continues |

@@ -10,7 +10,7 @@ from typer.testing import CliRunner
 
 from marianabot.cli import app
 from marianabot.config import Config
-from marianabot.discord_bridge import DiscordBridge, round_text, status_text
+from marianabot.discord_bridge import DiscordBridge, status_text
 from marianabot.discord_config import DiscordConfig, load_discord, read_token, write_private
 from marianabot.store import Store
 
@@ -151,9 +151,6 @@ def test_status_distinguishes_tokens_app_context_and_unreported_allowance(store)
     assert "Allowance not reported" in text
     assert "60,000 characters" in text
     assert "native token window remaining: unknown" in text
-    text = round_text(store, run_id, dict(number=1, plan="Legacy plan @everyone", review=review()))
-    assert "Plan excerpt" in text and "No separate change summary recorded" in text
-    assert "@everyone" not in text
 
 
 def test_setup_is_disabled_by_default_and_never_contains_token(tmp_path, monkeypatch):

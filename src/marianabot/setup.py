@@ -6,10 +6,8 @@ import typer
 from rich.console import Console
 from rich.text import Text
 
-from marianabot.config import BrainConfig, Config, load_config, save_model_preferences
+from marianabot.config import EFFORTS, BrainConfig, Config, load_config, save_model_preferences
 from marianabot.store import Store
-
-EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
 
 def choose_brain(label: str, current: BrainConfig) -> BrainConfig:

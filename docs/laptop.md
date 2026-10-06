@@ -16,9 +16,9 @@ file into the editor without sending it. Unsent drafts save automatically.
 
 ## While the team works
 
-MB (Astra) turns your problem into a research brief and lists assumptions and
-questions. Three RB specialists (Astra) develop independent proposals; their chair
-compares and combines them. Three JB critics (Opus 5.5) challenge the plan; their
+MB turns your problem into a research brief and lists assumptions and
+questions. By default, three RB specialists develop independent proposals; their chair
+compares and combines them. Three JB critics challenge the plan; their
 chair writes a review and the next prompt for RB. You see each brief, combined plan
 and review in the conversation. Expand long messages to read them in full.
 
@@ -55,8 +55,8 @@ latest message, and **Ctrl+Q** closes chat. Shift+Enter also inserts a newline i
 terminals that support it. F7 selects the entire draft; Ctrl+Z undoes edits.
 
 Click **Models** or type `/models` to change either provider's model and effort.
-The existing defaults are Astra/high and Opus 5.5/medium; **Use defaults**, then **Save**
-restores those choices. Choose from the live model lists reported by your signed-in
+**Use defaults**, then **Save** restores the [default models and efforts](../README.md#install).
+Choose from the live model lists reported by your signed-in
 clients. Effort options change with the selected model; models without adjustable
 effort show a disabled **Default** field. If a list cannot load, check that client's
 login and use **Retry**. New models appear when the client reports them. MarianaBot
