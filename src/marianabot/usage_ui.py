@@ -109,7 +109,7 @@ class UsageStrip(Vertical):
         demo: bool,
         working: bool,
         now=None,
-        codex_refresh: str = "",
+        refresh: dict | None = None,
     ):
         now = time.time() if now is None else now
         wide = self.size.width >= 100
@@ -151,10 +151,11 @@ class UsageStrip(Vertical):
             )
             quota = self.query_one(f"#limit-{provider}", Static)
             quota_text = quota_line(limits.get(provider, {}), demo=demo, now=now)
-            if provider == "openai" and codex_refresh and not demo:
+            state = (refresh or {}).get(provider)
+            if state and not demo:
                 quota_text.append(
-                    " · " + codex_refresh,
-                    style=ATTENTION if codex_refresh == "refresh failed" else MUTED,
+                    " · " + state,
+                    style=ATTENTION if state == "refresh failed" else MUTED,
                 )
             quota.update(quota_text)
             quota.tooltip = "Allowance percentages are used, not remaining.\n" + "\n".join(

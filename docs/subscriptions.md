@@ -68,10 +68,25 @@ MarianaBot checks it before each OpenAI dispatch, conservatively observes all
 reported buckets, and shares the result across MB/RB.
 
 Claude's stream can report rate_limit_event with utilization and resetsAt.
-MarianaBot keeps those observations and waits when capacity is rejected or reaches
-the configured threshold. The default threshold is 95%; it cannot predict the
-unknown usage of the next request. Claude does not always provide a complete
-account snapshot through this stream. Unknown values are displayed as unknown.
+MarianaBot also uses the installed client's read-only `get_usage` control request
+to read session, weekly and available model-specific allowance windows. Both
+providers refresh at chat startup, cloud reconnect, every minute and through
+`/usage`; research workers keep polling while the chat is closed. These checks
+never send model prompts. Claude's usage protocol is experimental and may change
+with client versions; missing or unreadable reports keep the last good snapshot.
+
+The metadata process permits Claude's explicit usage lookup while keeping
+telemetry, error reporting and auto-updates disabled. Research processes retain
+their existing network restrictions. Claude may reuse a recent client cache;
+MarianaBot preserves its observation timestamp and rejects stale cached fallbacks.
+Stream events without utilization do not erase a measured percentage or refresh
+its age. Unknown values are displayed as unknown.
+
+MarianaBot waits when capacity is rejected or a relevant window reaches the
+configured threshold. The default threshold is 95%; it cannot predict the
+unknown usage of the next request. Model-specific windows apply to the selected
+Claude model, rather than blocking it because a different model has exhausted
+its own allowance.
 
 If a rejection provides no usable reset time, the default retry delay is 30 minutes.
 Cooldown timestamps survive restarts. The worker never buys credits, rotates

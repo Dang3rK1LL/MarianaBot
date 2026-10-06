@@ -17,6 +17,8 @@ def offline_chat_account(monkeypatch):
             raise ClientError("Offline account fixture")
 
     monkeypatch.setattr("marianabot.chat.CodexAccount", OfflineAccount)
+    monkeypatch.setattr("marianabot.chat.ClaudeAccount", OfflineAccount)
+    monkeypatch.setattr("marianabot.engine.ClaudeAccount", OfflineAccount)
 
 
 @pytest.fixture

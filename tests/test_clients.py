@@ -1,10 +1,15 @@
+import json
 import sys
+import time
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
 from marianabot import clients
 from marianabot.clients import (
+    ClaudeAccount,
+    ClientError,
     CodexAccount,
     NativeClient,
     claude_account,
@@ -15,7 +20,8 @@ from marianabot.limits import SubscriptionLimits
 
 
 @pytest.fixture
-def fake_clients(monkeypatch):
+def fake_clients(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
     monkeypatch.setattr(
         clients,
         "executable",
@@ -39,6 +45,71 @@ async def test_claude_catalog_uses_only_initialization_and_resolves_picker_model
     assert models[0]["resolvedModel"] == "claude-opus-5-5"
     assert "xhigh" in models[0]["supportedEffortLevels"]
     assert models[1]["resolvedModel"] == "claude-haiku-4-5-20251001"
+
+
+async def test_claude_usage_reads_only_metadata_and_preserves_research_isolation(
+    fake_clients, config, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "must-not-reach-child")
+    config.jb.model = "unavailable-saved-model"
+    config.jb.effort = "unavailable-effort"
+    account = await ClaudeAccount(config, tmp_path).snapshot()
+    assert account["auth"] == "claude.ai"
+    assert account["limits"]["five_hour"]["utilization"] == 5
+    assert account["limits"]["seven_day"]["utilization"] == 12
+    assert time.time() - account["observed"] < 5
+    assert subscription_env()["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] == "1"
+
+
+@pytest.mark.parametrize("limits", [None, {}, {"error": {"type": "rate_limit_error"}}])
+async def test_claude_missing_usage_does_not_become_zero(
+    config, tmp_path, monkeypatch, limits, store
+):
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        clients,
+        "_claude_metadata",
+        AsyncMock(
+            return_value={"metadata": {"rate_limits_available": True, "rate_limits": limits}}
+        ),
+    )
+    if limits is None:
+        with pytest.raises(ClientError, match="unavailable"):
+            await ClaudeAccount(config, tmp_path).snapshot()
+    else:
+        result = await ClaudeAccount(config, tmp_path).snapshot()
+        with pytest.raises(ValueError, match="no readable"):
+            SubscriptionLimits(store, "anthropic", config.subscription).claude_snapshot(
+                result["limits"]
+            )
+
+
+@pytest.mark.parametrize("age", [25, 360])
+async def test_claude_cache_timestamp_is_preserved_and_stale_fallback_is_rejected(
+    config, tmp_path, monkeypatch, age
+):
+    now = time.time()
+    limits = {"five_hour": {"utilization": 42, "resets_at": "2030-01-01T00:00:00Z"}}
+    (tmp_path / ".claude.json").write_text(
+        json.dumps(
+            {"cachedUsageUtilization": {"fetchedAtMs": (now - age) * 1000, "utilization": limits}}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        clients,
+        "_claude_metadata",
+        AsyncMock(
+            return_value={"metadata": {"rate_limits_available": True, "rate_limits": limits}}
+        ),
+    )
+    if age > 90:
+        with pytest.raises(ClientError, match="stale"):
+            await ClaudeAccount(config, tmp_path).snapshot()
+    else:
+        result = await ClaudeAccount(config, tmp_path).snapshot()
+        assert result["observed"] == now - age
 
 
 @pytest.mark.parametrize("provider", ["openai", "anthropic"])

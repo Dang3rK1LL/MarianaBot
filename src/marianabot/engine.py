@@ -5,7 +5,14 @@ import time
 
 from pydantic import ValidationError
 
-from marianabot.clients import ClientError, CodexAccount, DemoClient, NativeClient, claude_account
+from marianabot.clients import (
+    ClaudeAccount,
+    ClientError,
+    CodexAccount,
+    DemoClient,
+    NativeClient,
+    claude_account,
+)
 from marianabot.config import Config
 from marianabot.limits import SubscriptionLimits
 from marianabot.memory import Compactor, size
@@ -73,6 +80,7 @@ class Engine:
         self.shutdown = asyncio.Event()
         self.mailbox_lock = asyncio.Lock()
         self.account_lock = asyncio.Lock()
+        self.claude_account_lock = asyncio.Lock()
         self.gates = {
             provider: asyncio.Semaphore(brain.concurrency)
             for provider, brain in (("openai", self.config.rb), ("anthropic", self.config.jb))
@@ -85,6 +93,7 @@ class Engine:
         client_dir = store.client_directory(run_id)
         client_dir.mkdir(parents=True, exist_ok=True)
         self.account = CodexAccount(self.config, client_dir)
+        self.claude_account = ClaudeAccount(self.config, client_dir)
         self.clients = clients or {
             p: DemoClient()
             if self.demo
@@ -159,6 +168,8 @@ class Engine:
                 f"Codex does not list requested model {self.config.rb.model}; no substitute selected",
             )
         await claude_account(self.config, self.account.cwd)
+        with contextlib.suppress(ClientError, OSError, ValueError):
+            await self.refresh_claude_account()
         self.emit(
             "Verified subscription authentication for both clients; MB and RB share OpenAI usage"
         )
@@ -173,13 +184,27 @@ class Engine:
         """Refresh account quotas during long calls/waits, without generating model tokens."""
         if self.demo:
             return
-        while True:
-            await asyncio.sleep(interval)
+
+        async def refresh(check):
             try:
-                await self.refresh_account()
+                await check()
             except (ClientError, OSError, ValueError):
                 # Retain the last good snapshot and its age. Dispatch preflight still gates calls.
                 pass
+
+        while True:
+            await asyncio.sleep(interval)
+            await asyncio.gather(
+                refresh(self.refresh_account), refresh(self.refresh_claude_account)
+            )
+
+    async def refresh_claude_account(self):
+        async with self.claude_account_lock:
+            account = await self.claude_account.snapshot()
+            self.limits["anthropic"].claude_snapshot(
+                account["limits"], observed=account.get("observed"), model=self.config.jb.model
+            )
+            return account
 
     async def capacity(self, provider: str):
         if self.demo:
@@ -192,6 +217,9 @@ class Engine:
                 )
             if provider == "openai":
                 await self.refresh_account()
+            else:
+                with contextlib.suppress(ClientError, OSError, ValueError):
+                    await self.refresh_claude_account()
             if self.limits[provider].remaining() <= 0:
                 break
         async with self.spacing[provider]:

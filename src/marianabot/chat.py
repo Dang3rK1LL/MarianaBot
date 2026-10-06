@@ -20,7 +20,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Collapsible, Footer, Markdown, OptionList, Static, TextArea
 from textual.widgets.option_list import Option
 
-from marianabot.clients import ClientError, CodexAccount
+from marianabot.clients import ClaudeAccount, ClientError, CodexAccount
 from marianabot.config import Config, load_config, save_model_preferences
 from marianabot.limits import SubscriptionLimits
 from marianabot.models_ui import ModelsScreen
@@ -42,7 +42,7 @@ COMMANDS = {
     "/sessions": "Browse saved conversations",
     "/open": "Open a conversation by its ID",
     "/status": "Show research progress and recent activity",
-    "/usage": "Refresh Codex limits and show subscription usage",
+    "/usage": "Refresh Codex and Claude limits and show subscription usage",
     "/memory": "Inspect research memory and protected notes",
     "/models": "Choose models and effort for new research",
     "/pin": "Keep an instruction verbatim in future context",
@@ -274,7 +274,8 @@ class MarianaChat(App):
         self.exiting = False
         self.usage_worker = None
         self.usage_refreshing = False
-        self.usage_error = ""
+        self.usage_errors = {"openai": "", "anthropic": ""}
+        self.usage_pending = set()
         self.usage_complete = asyncio.Event()
         self.usage_request_path = self.store.directory / "usage-refresh.request"
         self.usage_request_stamp = self.usage_request_version()
@@ -334,27 +335,59 @@ class MarianaChat(App):
         if self.usage_worker is not None and not self.usage_worker.is_finished:
             return self.usage_worker
         self.usage_refreshing = True
+        self.usage_pending = {"openai", "anthropic"}
         self.usage_complete.clear()
         self.usage_worker = self.run_worker(
-            self.refresh_codex_usage(), name="Codex usage refresh", exit_on_error=False
+            self.refresh_usage(), name="Subscription usage refresh", exit_on_error=False
         )
         return self.usage_worker
 
-    async def refresh_codex_usage(self):
+    @property
+    def usage_error(self):
+        return "\n".join(error for error in self.usage_errors.values() if error)
+
+    def usage_failed(self, provider):
+        label = "Codex" if provider == "openai" else "Claude"
+        self.usage_errors[provider] = (
+            f"{label} refresh failed; showing the last reported snapshot. Check the client login and network, then use /usage to retry."
+        )
+
+    async def refresh_usage(self):
+        async def refresh_provider(provider, account_class):
+            try:
+                account = await account_class(config, workspace).snapshot()
+                if self.exiting or self.demo:
+                    return
+                limits = SubscriptionLimits(self.store, provider, config.subscription)
+                if provider == "openai":
+                    limits.codex(account["limits"])
+                else:
+                    limits.claude_snapshot(
+                        account["limits"], observed=account.get("observed"), model=config.jb.model
+                    )
+                self.usage_errors[provider] = ""
+            except (ClientError, OSError, ValueError):
+                self.usage_failed(provider)
+            finally:
+                self.usage_pending.discard(provider)
+                if self.is_running and not self.exiting:
+                    await self.refresh_state()
+
         try:
             config = load_config(self.config_path) if self.config_path.exists() else Config()
             workspace = self.store.directory / "account-workspace"
             workspace.mkdir(parents=True, exist_ok=True)
-            account = await CodexAccount(config, workspace).snapshot()
-            if self.exiting or self.demo:
-                return
-            SubscriptionLimits(self.store, "openai", config.subscription).codex(account["limits"])
-            self.usage_error = ""
+            await asyncio.gather(
+                refresh_provider("openai", CodexAccount),
+                refresh_provider("anthropic", ClaudeAccount),
+            )
         except (ClientError, OSError, ValueError):
             # Retain the last successful snapshot and its original observation time.
-            self.usage_error = "Codex refresh failed; showing the last reported snapshot. Check the client login and network, then use /usage to retry."
+            for provider in self.usage_errors:
+                self.usage_failed(provider)
         finally:
             self.usage_refreshing = False
+            self.usage_pending.clear()
             self.usage_complete.set()
             if self.is_running and not self.exiting:
                 await self.refresh_state()
@@ -812,11 +845,14 @@ class MarianaChat(App):
             scope=scope,
             demo=usage_demo,
             working=bool(active and active.get("run_id") == usage_run),
-            codex_refresh="refreshing"
-            if self.usage_refreshing
-            else "refresh failed"
-            if self.usage_error
-            else "",
+            refresh={
+                provider: "refreshing"
+                if provider in self.usage_pending
+                else "refresh failed"
+                if self.usage_errors[provider]
+                else ""
+                for provider in self.usage_errors
+            },
         )
         mode = "Offline demo" if self.demo else "Subscriptions"
         status = "New conversation"

@@ -237,10 +237,19 @@ async def test_quota_monitor_refreshes_without_model_calls_and_keeps_last_good_s
         }
 
     engine.account.snapshot = snapshot
+
+    async def claude_snapshot():
+        return {"limits": {"five_hour": {"utilization": 12, "resets_at": time.time() + 3600}}}
+
+    engine.claude_account.snapshot = claude_snapshot
     task = asyncio.create_task(engine.monitor_usage(interval=0.01))
     try:
         await asyncio.wait_for(observed.wait(), 2)
         assert store.get_limits("openai")["windows"][0]["percent"] == 42
+        async with asyncio.timeout(2):
+            while not store.get_limits("anthropic").get("windows"):
+                await asyncio.sleep(0.01)
+        assert store.get_limits("anthropic")["windows"][0]["percent"] == 12
         assert not store.calls(run_id)
         saved = store.get_limits("openai")
 
@@ -248,8 +257,18 @@ async def test_quota_monitor_refreshes_without_model_calls_and_keeps_last_good_s
             raise ClientError("Unavailable")
 
         engine.account.snapshot = unavailable
+
+        async def newer_claude_snapshot():
+            return {"limits": {"five_hour": {"utilization": 35}}}
+
+        engine.claude_account.snapshot = newer_claude_snapshot
         await asyncio.sleep(0.04)
         assert store.get_limits("openai") == saved
+        assert store.get_limits("anthropic")["windows"][0]["percent"] == 35
+        saved_claude = store.get_limits("anthropic")
+        engine.claude_account.snapshot = unavailable
+        await asyncio.sleep(0.04)
+        assert store.get_limits("anthropic") == saved_claude
         assert not task.done()
     finally:
         task.cancel()

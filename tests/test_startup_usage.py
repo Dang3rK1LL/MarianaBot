@@ -3,6 +3,8 @@ import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
+import pytest
+
 from marianabot.chat import Composer, MarianaChat
 from marianabot.clients import ClientError
 from marianabot.config import DEFAULT_TOML
@@ -22,6 +24,15 @@ def quota(percent):
     }
 
 
+def claude_quota(percent):
+    return {
+        "limits": {
+            "five_hour": {"utilization": percent, "resets_at": time.time() + 3600},
+            "seven_day": {"utilization": 8, "resets_at": time.time() + 86400},
+        }
+    }
+
+
 def app_at(tmp_path, *, demo=False):
     config = tmp_path / "mariana.toml"
     config.write_text(DEFAULT_TOML, encoding="utf-8")
@@ -30,10 +41,11 @@ def app_at(tmp_path, *, demo=False):
     )
 
 
-def account_fixture(monkeypatch, **kwargs):
+def account_fixture(monkeypatch, *, provider="openai", **kwargs):
     snapshot = AsyncMock(**kwargs)
     account = Mock(return_value=SimpleNamespace(snapshot=snapshot))
-    monkeypatch.setattr("marianabot.chat.CodexAccount", account)
+    name = "CodexAccount" if provider == "openai" else "ClaudeAccount"
+    monkeypatch.setattr("marianabot.chat." + name, account)
     return snapshot
 
 
@@ -114,7 +126,7 @@ async def test_failed_startup_keeps_last_good_snapshot_and_manual_retry_recovers
         assert "last reported snapshot" in app.usage_text()
         await app.command("/usage", "")
         assert app.store.get_limits("openai")["windows"][0]["percent"] == 24
-        assert not app.usage_error
+        assert not app.usage_errors["openai"]
         assert "refresh failed" not in str(app.query_one("#limit-openai").content)
         assert snapshot.await_count == 2
 
@@ -142,6 +154,9 @@ async def test_cloud_reconnect_marker_refreshes_even_when_snapshot_is_fresh(tmp_
 
 async def test_offline_demo_does_not_query_account_limits(tmp_path, monkeypatch):
     snapshot = account_fixture(monkeypatch, side_effect=AssertionError("Demo must stay offline"))
+    claude = account_fixture(
+        monkeypatch, provider="anthropic", side_effect=AssertionError("Demo must stay offline")
+    )
     app = app_at(tmp_path, demo=True)
     app.USAGE_REFRESH_SECONDS = 0.1
     async with app.run_test() as pilot:
@@ -151,6 +166,94 @@ async def test_offline_demo_does_not_query_account_limits(tmp_path, monkeypatch)
         await app.command("/usage", "")
         assert "no subscription usage" in app.usage_text()
         snapshot.assert_not_awaited()
+        claude.assert_not_awaited()
+
+
+@pytest.mark.parametrize("trigger", ["reopen", "manual", "reconnect", "periodic"])
+async def test_claude_refreshes_on_start_and_followup_without_research(
+    tmp_path, monkeypatch, trigger
+):
+    readings = iter([claude_quota(35), claude_quota(47)])
+    snapshot = account_fixture(
+        monkeypatch, provider="anthropic", side_effect=lambda: next(readings, claude_quota(47))
+    )
+    account_fixture(monkeypatch, return_value=quota(10))
+    app = app_at(tmp_path)
+    app.store.set_limits(
+        "anthropic", dict(observed=time.time(), windows=[dict(name="five_hour", percent=98)])
+    )
+    async with app.run_test() as pilot:
+        await until(lambda: app.usage_worker.is_finished, pilot)
+        assert app.store.get_limits("anthropic")["windows"][0]["percent"] == 35
+        assert "refresh failed" not in str(app.query_one("#limit-anthropic").content)
+        assert not app.store.runs()
+        if trigger == "manual":
+            await app.command("/usage", "")
+        elif trigger == "reconnect":
+            app.usage_request_path.touch()
+        elif trigger == "periodic":
+            app.set_interval(0.1, app.request_usage_refresh, repeat=1)
+        if trigger != "reopen":
+            await until(lambda: snapshot.await_count >= 2 and not app.usage_refreshing, pilot)
+            assert app.store.get_limits("anthropic")["windows"][0]["percent"] == 47
+            assert not app.store.runs()
+    if trigger == "reopen":
+        reopened = app_at(tmp_path)
+        async with reopened.run_test() as pilot:
+            await until(lambda: not reopened.usage_refreshing, pilot)
+            assert reopened.store.get_limits("anthropic")["windows"][0]["percent"] == 47
+    assert snapshot.await_count >= 2 if trigger == "periodic" else snapshot.await_count == 2
+    assert all(call.args == () and call.kwargs == {} for call in snapshot.await_args_list)
+
+
+async def test_claude_failure_does_not_block_codex_and_retry_recovers(tmp_path, monkeypatch):
+    account_fixture(monkeypatch, return_value=quota(42))
+    snapshot = account_fixture(
+        monkeypatch,
+        provider="anthropic",
+        side_effect=[ClientError("Unavailable"), claude_quota(24)],
+    )
+    app = app_at(tmp_path)
+    saved = dict(observed=100, windows=[dict(name="five_hour", percent=54, observed=100)])
+    app.store.set_limits("anthropic", saved)
+    async with app.run_test() as pilot:
+        await until(lambda: not app.usage_refreshing, pilot)
+        assert app.store.get_limits("anthropic") == saved
+        assert app.store.get_limits("openai")["windows"][0]["percent"] == 42
+        assert "refresh failed" in str(app.query_one("#limit-anthropic").content)
+        assert "refresh failed" not in str(app.query_one("#limit-openai").content)
+        await app.command("/usage", "")
+        assert not app.usage_error
+        assert app.store.get_limits("anthropic")["windows"][0]["percent"] == 24
+        assert snapshot.await_count == 2
+
+
+async def test_slow_claude_refresh_keeps_codex_visible_and_quit_cancels_it(tmp_path, monkeypatch):
+    account_fixture(monkeypatch, return_value=quota(42))
+    started, cancelled = asyncio.Event(), asyncio.Event()
+
+    async def pending():
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    snapshot = account_fixture(monkeypatch, provider="anthropic", side_effect=pending)
+    app = app_at(tmp_path)
+    async with app.run_test() as pilot:
+        await until(lambda: bool(app.store.get_limits("openai").get("windows")), pilot)
+        assert started.is_set()
+        app.query_one(Composer).load_text("An unsent draft")
+        app.request_usage_refresh()
+        await pilot.pause()
+        assert snapshot.await_count == 1
+        assert "42%" in str(app.query_one("#limit-openai").content)
+        assert "refreshing" not in str(app.query_one("#limit-openai").content)
+        assert "refreshing" in str(app.query_one("#limit-anthropic").content)
+        assert app.query_one(Composer).text == "An unsent draft"
+        app.action_detach()
+    assert cancelled.is_set()
 
 
 async def test_quitting_cancels_pending_account_refresh(tmp_path, monkeypatch):

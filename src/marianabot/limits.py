@@ -2,6 +2,7 @@
 
 import math
 import time
+from datetime import UTC, datetime
 
 from marianabot.config import SubscriptionConfig
 from marianabot.store import Store
@@ -67,6 +68,61 @@ class SubscriptionLimits:
         self.data["until"] = max(self.data.get("until", 0), until)
         self.save()
 
+    def claude_snapshot(self, payload: dict, now: float | None = None, *, observed=None, model=""):
+        """Claude's account percentages use 0..100; stream events use fractions."""
+        now = time.time() if now is None else now
+        observed = now if observed is None else observed
+        windows = []
+        until = 0
+
+        def add(name, info, *, applies=True):
+            nonlocal until
+            if not isinstance(info, dict):
+                return
+            percent = finite(info.get("utilization"), None)
+            if percent is None or percent < 0 or percent > 100:
+                return
+            reset = info.get("resets_at")
+            if isinstance(reset, str):
+                try:
+                    parsed = datetime.fromisoformat(reset.replace("Z", "+00:00"))
+                    reset = parsed.replace(tzinfo=parsed.tzinfo or UTC).timestamp()
+                except ValueError:
+                    reset = 0
+            reset = finite(reset)
+            windows.append(dict(name=name, percent=percent, reset=reset, observed=observed))
+            if applies and percent >= self.config.pause_at_percent:
+                until = max(
+                    until, reset if reset > now else now + self.config.unknown_reset_wait_seconds
+                )
+
+        for name in (
+            "five_hour",
+            "seven_day",
+            "seven_day_opus",
+            "seven_day_sonnet",
+            "seven_day_oauth_apps",
+        ):
+            applies = name in {"five_hour", "seven_day", "seven_day_oauth_apps"} or (
+                name.removeprefix("seven_day_") in model.lower()
+            )
+            add(name, payload.get(name), applies=applies)
+        for info in payload.get("model_scoped") or []:
+            if isinstance(info, dict) and info.get("display_name"):
+                name = str(info["display_name"])
+                add(name + " 7d", info, applies=name.lower().split()[0] in model.lower())
+        if not windows:
+            raise ValueError("Claude returned no readable subscription usage windows")
+        self.data = self.store.get_limits(self.provider)
+        prior = {w["name"]: w for w in self.data.get("windows", [])}
+        windows = [
+            prior[w["name"]] if finite(prior.get(w["name"], {}).get("observed")) > observed else w
+            for w in windows
+        ]
+        self.data.update(windows=windows, observed=observed, source="Claude get_usage")
+        self.data["until"] = max(self.data.get("until", 0), until)
+        self.save()
+
     def claude(self, info: dict, now: float | None = None):
         now = time.time() if now is None else now
         reset = finite(info.get("resetsAt"))
@@ -79,7 +135,13 @@ class SubscriptionLimits:
             "status": info.get("status", "unknown"),
             "observed": now,
         }
+        self.data = self.store.get_limits(self.provider)
         windows = {w["name"]: w for w in self.data.get("windows", [])}
+        prior = windows.get(window["name"])
+        if percent is None and prior and prior.get("percent") is not None:
+            # An 'allowed' event often omits utilization. Keep the actual measurement
+            # and its age instead of erasing it or calling an old percentage fresh.
+            window = prior | {"status": window["status"]}
         windows[window["name"]] = window
         self.data.update(
             windows=list(windows.values()), observed=now, source="Claude rate_limit_event"

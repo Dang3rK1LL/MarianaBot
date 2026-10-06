@@ -7,6 +7,7 @@ import re
 import shutil
 import signal
 import subprocess
+import time
 from pathlib import Path
 
 from marianabot import __version__
@@ -65,7 +66,7 @@ def executable(command: str) -> list[str]:
     return [str(path)]
 
 
-async def launch(args: list[str], cwd: Path):
+async def launch(args: list[str], cwd: Path, *, env: dict[str, str] | None = None):
     kwargs = (
         {"creationflags": subprocess.CREATE_NO_WINDOW}
         if os.name == "nt"
@@ -77,7 +78,7 @@ async def launch(args: list[str], cwd: Path):
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=cwd,
-        env=subscription_env(),
+        env=subscription_env() if env is None else env,
         limit=MAX_CAPTURE,
         **kwargs,
     )
@@ -459,41 +460,98 @@ class NativeClient:
             await stderr_task
 
 
-async def claude_models(config: Config, cwd: Path) -> list[dict]:
-    """Read the subscription CLI's picker metadata without sending a user prompt."""
-    await claude_account(config, cwd)
+async def _claude_metadata(config: Config, cwd: Path, *, usage=False) -> dict:
+    """Only initialize and read metadata; never submit a user message."""
+    account = await claude_account(config, cwd)
     args = NativeClient("anthropic", config, cwd, None).args(False, preferences=False)
-    process = await launch(args + ["--input-format", "stream-json"], cwd)
+    env = subscription_env()
+    if usage:
+        # This switch also blocks explicit /usage reads in Claude Code. Relax it
+        # only for this metadata process; research clients keep the usual isolation.
+        env.pop("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", None)
+        env.update(DISABLE_TELEMETRY="1", DISABLE_ERROR_REPORTING="1", DISABLE_AUTOUPDATER="1")
+    process = await launch(args + ["--input-format", "stream-json"], cwd, env=env)
     stderr_task = asyncio.create_task(drain(process.stderr))
+
+    async def rpc(subtype, **extra):
+        request = {
+            "type": "control_request",
+            "request_id": f"mariana-{subtype}",
+            "request": {"subtype": subtype, **extra},
+        }
+        process.stdin.write((json.dumps(request) + "\n").encode())
+        await process.stdin.drain()
+        while line := await process.stdout.readline():
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            response = event.get("response", {})
+            if (
+                event.get("type") == "control_response"
+                and response.get("request_id") == request["request_id"]
+            ):
+                data = response.get("response")
+                if response.get("subtype") == "success" and isinstance(data, dict):
+                    return data
+                break
+        raise ClientError("Claude metadata unavailable; check login, network and CLI version")
+
     try:
         async with asyncio.timeout(25):
-            request = {
-                "type": "control_request",
-                "request_id": "mariana-models",
-                "request": {"subtype": "initialize", "hooks": {}},
-            }
-            process.stdin.write((json.dumps(request) + "\n").encode())
-            await process.stdin.drain()
-            while line := await process.stdout.readline():
-                try:
-                    event = json.loads(line)
-                except ValueError:
-                    continue
-                response = event.get("response", {})
-                if (
-                    event.get("type") == "control_response"
-                    and response.get("request_id") == request["request_id"]
-                ):
-                    models = response.get("response", {}).get("models")
-                    if response.get("subtype") != "success" or not isinstance(models, list):
-                        break
-                    return models
-            raise ClientError("Claude model list unavailable; check login and CLI version")
+            metadata = await rpc("initialize", hooks={})
+            if usage:
+                metadata = await rpc("get_usage", skip_behaviors=True)
+            return account | {"metadata": metadata}
     except TimeoutError:
-        raise ClientError("Claude model list timed out; no model request was sent") from None
+        raise ClientError("Claude metadata check timed out; no model request was sent") from None
     finally:
         await terminate(process)
         await stderr_task
+
+
+async def claude_models(config: Config, cwd: Path) -> list[dict]:
+    """Read the subscription CLI's picker metadata without sending a user prompt."""
+    result = await _claude_metadata(config, cwd)
+    models = result["metadata"].get("models")
+    if not isinstance(models, list):
+        raise ClientError("Claude model list unavailable; check login and CLI version")
+    return models
+
+
+class ClaudeAccount:
+    def __init__(self, config: Config, cwd: Path):
+        self.config, self.cwd = config, cwd
+
+    async def snapshot(self) -> dict:
+        result = await _claude_metadata(self.config, self.cwd, usage=True)
+        metadata = result.pop("metadata")
+        limits = metadata.get("rate_limits")
+        if not metadata.get("rate_limits_available") or not isinstance(limits, dict):
+            raise ClientError(
+                "Claude usage limits unavailable; check login, network and CLI version"
+            )
+        now = time.time()
+        observed = self.cached_observation(limits) or now
+        if now - observed > 90 or observed > now + 5:
+            raise ClientError("Claude returned a stale usage snapshot; keeping the last report")
+        return result | {"limits": limits, "observed": observed}
+
+    @staticmethod
+    def cached_observation(limits: dict) -> float | None:
+        # Claude's get_usage can silently fall back to an hour-old saved snapshot.
+        # Read only its matching usage timestamp; never read or export credentials.
+        path = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home()) / ".claude.json"
+        try:
+            cache = json.loads(path.read_text(encoding="utf-8")).get("cachedUsageUtilization", {})
+            saved = cache.get("utilization", {})
+            names = [key for key in ("five_hour", "seven_day") if limits.get(key)]
+            if names and all(saved.get(key) == limits[key] for key in names):
+                stamp = float(cache["fetchedAtMs"]) / 1000
+                return stamp if stamp > 0 else None
+        except (OSError, ValueError, TypeError, KeyError, AttributeError):
+            pass
+        return None
 
 
 class DemoClient:

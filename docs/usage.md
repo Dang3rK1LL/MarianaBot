@@ -8,8 +8,8 @@ working run. Saved runs retain their totals after restart.
 `in` means reported input tokens, including cached input; `out` means reported
 output. Allowance percentages mean **used**. The two windows with highest reported
 usage are shown, followed by the nearest reported reset or current cooldown and
-snapshot age. Hover for cache details or additional windows; `/usage` lists the
-full quota snapshot. Unknown values remain unknown; expired snapshots say refresh
+snapshot age. Hover for cache details or additional windows; `/usage` refreshes and
+lists the full quota snapshot. Unknown values remain unknown; expired snapshots say refresh
 due instead of pretending the allowance reset. Other apps affect account allowance
 but do not contribute to MarianaBot's run token totals.
 
@@ -24,8 +24,17 @@ not a claim that providers supply continuous token counts:
   cumulative `message_delta` updates when available. Assistant output placeholders
   are ignored; repeated blocks are deduplicated by message ID. A final `modelUsage`
   total takes precedence over partial reports and includes reported helper usage.
-  Allowance information updates from `rate_limit_event`; the app does not poll an
-  undocumented billing endpoint or send extra model prompts to obtain quotas.
+  Allowance information updates from `rate_limit_event` and the installed client's
+  read-only `get_usage` request. Account percentages already use a 0–100 scale;
+  stream utilization uses fractions. Unknown event values preserve earlier actual
+  measurements and their age.
+
+Both account quotas refresh at each chat start, cloud reconnect, every minute
+while idle or working, and through `/usage`. Background research keeps refreshing
+when chat is closed. Checks run independently, never submit model prompts, and
+retain the last successful snapshot if a provider fails. Claude's metadata
+protocol is experimental; recent client cache timestamps are preserved and stale
+cached fallbacks are rejected.
 
 Each invocation has one durable usage row. Final totals replace partial totals;
 failed/cancelled attempts keep whatever they reported, and a retry counts as a new

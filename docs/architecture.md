@@ -30,8 +30,10 @@ The fixed usage strip reads small SQLite `call_usage` aggregates every 0.75 seco
 Native client events upsert per-invocation counters while calls are running; final
 reports replace partial reports. Token accounting includes interrupted attempts
 and avoids cached-input and repeated-stream double counting. A separate worker
-task refreshes Codex account quotas every 60 seconds, serialized with dispatch
-checks. Claude allowance reports remain event-driven. See [usage reporting](usage.md).
+task refreshes both account quotas every 60 seconds, serialized with each
+provider's dispatch checks. Chat also refreshes both at startup, cloud reconnect,
+and through `/usage`, including while idle. Claude stream events supply additional
+measurements during calls. See [usage reporting](usage.md).
 
 ## Research engine
 

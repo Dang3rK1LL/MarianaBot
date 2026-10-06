@@ -57,7 +57,41 @@ elif "--input-format" in args:
     for line in sys.stdin:
         event = json.loads(line)
         assert event["type"] == "control_request"  # Discovery must never submit inference.
-        assert event["request"]["subtype"] == "initialize"
+        subtype = event["request"]["subtype"]
+        assert subtype in {"initialize", "get_usage"}
+        if subtype == "get_usage":
+            assert event["request"]["skip_behaviors"] is True
+            assert not os.getenv("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC")
+            assert os.getenv("DISABLE_TELEMETRY") == "1"
+            assert os.getenv("DISABLE_ERROR_REPORTING") == "1"
+            assert os.getenv("DISABLE_AUTOUPDATER") == "1"
+            assert os.getenv("CLAUDE_CODE_SAFE_MODE") == "1"
+            assert not os.getenv("ANTHROPIC_API_KEY")
+            emit(
+                {
+                    "type": "control_response",
+                    "response": {
+                        "request_id": event["request_id"],
+                        "subtype": "success",
+                        "response": {
+                            "rate_limits_available": True,
+                            "rate_limits": {
+                                "five_hour": {
+                                    "utilization": 5,
+                                    "resets_at": "2030-01-01T00:00:00Z",
+                                },
+                                "seven_day": {
+                                    "utilization": 12,
+                                    "resets_at": "2030-01-02T00:00:00Z",
+                                },
+                                "seven_day_opus": None,
+                            },
+                            "session": {"model_usage": {}, "total_cost_usd": 0},
+                        },
+                    },
+                }
+            )
+            continue
         emit(
             {
                 "type": "control_response",
