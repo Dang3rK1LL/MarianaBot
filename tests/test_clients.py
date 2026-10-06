@@ -88,11 +88,14 @@ async def test_claude_missing_usage_does_not_become_zero(
 async def test_claude_cache_timestamp_is_preserved_and_stale_fallback_is_rejected(
     config, tmp_path, monkeypatch, age
 ):
-    now = time.time()
+    # Use the clock value from the failed CI run so this regression is deterministic.
+    now = 1_791_289_933.9084523
+    monkeypatch.setattr(clients.time, "time", lambda: now)
+    fetched_at_ms = int((now - age) * 1000)
     limits = {"five_hour": {"utilization": 42, "resets_at": "2030-01-01T00:00:00Z"}}
     (tmp_path / ".claude.json").write_text(
         json.dumps(
-            {"cachedUsageUtilization": {"fetchedAtMs": (now - age) * 1000, "utilization": limits}}
+            {"cachedUsageUtilization": {"fetchedAtMs": fetched_at_ms, "utilization": limits}}
         ),
         encoding="utf-8",
     )
@@ -109,7 +112,7 @@ async def test_claude_cache_timestamp_is_preserved_and_stale_fallback_is_rejecte
             await ClaudeAccount(config, tmp_path).snapshot()
     else:
         result = await ClaudeAccount(config, tmp_path).snapshot()
-        assert result["observed"] == now - age
+        assert result["observed"] == pytest.approx(now - age, rel=0, abs=0.001)
 
 
 @pytest.mark.parametrize("provider", ["openai", "anthropic"])
