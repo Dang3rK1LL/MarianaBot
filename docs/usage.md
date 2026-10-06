@@ -1,6 +1,7 @@
 # Usage reporting
 
-Both provider rows remain above the editor while you read, scroll or write. ChatGPT
+The info panel stays at the upper right while you read, scroll or write. Below
+120 columns, it sits above the conversation to leave room for messages. ChatGPT
 combines MB and RB; Claude shows JB. Counts belong to the active MarianaBot run. If
 you open a different conversation while a worker is running, the strip names that
 working run. Saved runs retain their totals after restart.

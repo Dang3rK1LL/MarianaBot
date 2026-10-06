@@ -93,8 +93,12 @@ async def test_keyboard_suggestions_help_and_small_terminal(tmp_path):
         await pilot.pause()
         assert app.focused == app.query_one(Composer)
         await pilot.resize_terminal(120, 40)
-        await pilot.pause()
-        assert app.query_one("#conversation").region.width == 120
+        async with asyncio.timeout(2):
+            while app.query_one("#usage-strip").region.x == 0:
+                await pilot.pause(0.05)
+        panel = app.query_one("#usage-strip").region
+        assert panel.right == 120
+        assert app.query_one("#conversation").region.right <= panel.x
 
 
 async def test_drafts_sessions_and_queued_message_survive_reopening(tmp_path):
@@ -252,10 +256,30 @@ async def test_usage_follows_background_work_and_stays_visible_while_reading_and
             for i in range(10):
                 await app.add_card("RB", f"Research {i}", "Plan paragraph.\n\n" * 5)
             app.query_one("#conversation").scroll_home(animate=False)
+            await pilot.pause()
+            panel_position = app.query_one("#usage-strip").region.offset
             app.query_one(Composer).load_text("/")
+            await pilot.pause()
+            assert app.query_one("#suggestions").display
+            assert app.query_one("#usage-strip").region.offset == panel_position
+            app.query_one(Composer).load_text("A longer draft.\n" * 12)
+            async with asyncio.timeout(2):
+                while app.query_one(Composer).region.height != 8:
+                    await pilot.pause(0.05)
+            assert app.query_one(Composer).region.height == 8
+            assert app.query_one("#usage-strip").region.offset == panel_position
+            app.query_one(Composer).clear()
             await pilot.resize_terminal(80, 24)
+            async with asyncio.timeout(2):
+                while app.query_one("#usage-strip").region.width != 80:
+                    await pilot.pause(0.05)
+            panel_position = app.query_one("#usage-strip").region.offset
+            app.query_one(Composer).load_text("/")
             await pilot.pause(1)
             strip = app.query_one("#usage-strip").region
+            assert strip.offset == panel_position
+            assert strip.width == 80
+            assert app.query_one("#conversation").region.y >= strip.bottom
             for selector in (
                 "#usage-openai",
                 "#usage-anthropic",

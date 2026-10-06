@@ -118,7 +118,7 @@ class UsageStrip(Vertical):
         now = time.time() if now is None else now
         wide = self.size.width >= 100
         self.query_one("#usage-scope", Static).update(
-            scope + " · reported tokens, incl. cache · allowance used"
+            scope + " · tokens incl. cache · allowance used"
         )
         models = Text(style=MUTED)
         if config is None:
@@ -126,7 +126,7 @@ class UsageStrip(Vertical):
         else:
             for index, (label, brain) in enumerate((("RB/MB", config.rb), ("JB", config.jb))):
                 if index:
-                    models.append(" · ")
+                    models.append("\n" if 0 < self.content_size.width < 60 else " · ")
                 models.append(f"{label} ")
                 effort = "default" if brain.effort == "auto" else brain.effort
                 models.append(f"{brain.model} / {effort}", style=TEXT)

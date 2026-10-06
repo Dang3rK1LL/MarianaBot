@@ -4,12 +4,13 @@ Screen { background: #171d24; color: #d9e0e4; }
 #masthead Button { min-width: 8; width: auto; height: 1; margin: 0; border: none; background: #202932; color: #a6afb8; }
 #masthead Button:hover, #masthead Button:focus { background: #92c9cb; color: #171d24; }
 #status-line { height: 1; padding: 0 2; color: #a6afb8; }
+#chat-body { height: 1fr; }
 #conversation { height: 1fr; padding: 1 3; scrollbar-size: 1 1; }
 #welcome-title { height: auto; margin: 1 0; text-style: bold; }
 #welcome-copy { height: auto; color: #a6afb8; }
-#usage-strip { height: auto; padding: 0 2; }
-#usage-strip Static { height: 1; }
-#usage-strip #usage-models { height: auto; }
+#usage-strip { dock: top; height: auto; padding: 0 2; }
+#usage-strip Static { height: auto; }
+#chat-body.wide #usage-strip { dock: right; width: 56; border-left: solid #46545e; }
 #usage-scope { color: #a6afb8; }
 .message { height: auto; margin-bottom: 2; }
 .speaker { height: auto; margin-bottom: 1; color: #92c9cb; text-style: bold; }

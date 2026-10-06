@@ -288,8 +288,9 @@ class MarianaChat(App):
             yield Button("Models", id="models")
             yield Button("Help", id="help")
         yield Static("", id="status-line", markup=False)
-        yield VerticalScroll(id="conversation")
-        yield UsageStrip(id="usage-strip")
+        with Vertical(id="chat-body"):
+            yield UsageStrip(id="usage-strip")
+            yield VerticalScroll(id="conversation")
         with Vertical(id="compose-box"):
             yield OptionList(id="suggestions", markup=False)
             yield Composer(
@@ -397,6 +398,7 @@ class MarianaChat(App):
             self.call_after_refresh(self.resize_layout)
 
     def resize_layout(self):
+        self.chat_screen.query_one("#chat-body").set_class(self.size.width >= 120, "wide")
         editor = self.chat_screen.query_one(Composer)
         maximum = 8 if self.size.height >= 32 else 5
         editor.styles.height = min(maximum, max(3, editor.wrapped_document.height + 2))
