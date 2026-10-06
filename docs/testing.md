@@ -28,7 +28,7 @@ subprocesses; they cannot establish live provider behavior.
 | Tool | Purpose | Requirements |
 |---|---|---|
 | [`scripts/capture_chat.py`](../scripts/capture_chat.py) | Capture the real terminal UI using synthetic research and usage | Base app; optional `resvg-py` for PNG output |
-| [`scripts/preview_discord.py`](../scripts/preview_discord.py) | Preview notification cards with synthetic data as HTML and SVG | Base app; no bot connection or model calls |
+| [`scripts/preview_discord.py`](../scripts/preview_discord.py) | Preview notification cards with synthetic data as HTML and SVG | Base app; optional `resvg-py` for PNG output; no bot connection or model calls |
 | [`scripts/check_updater.py`](../scripts/check_updater.py) | Build, validate and launch an update in a disposable checkout | Git and network access for Python packages |
 | [`scripts/check_linux_service.py`](../scripts/check_linux_service.py) | Check service interruption, checkpoint recovery and preservation of a deliberate pause | Linux, systemd user services and tmux |
 
@@ -37,11 +37,21 @@ tools above do not call model providers. The updater check uses temporary reposi
 environments. The Linux check creates and removes a temporary user service and
 demo database, independently of the normal research service.
 
-The screenshot tool writes to the gitignored `.mariana/visual-review/` directory.
+Both visual tools write to the gitignored `.mariana/visual-review/` directory by
+default. To regenerate the documentation images in a separate output folder:
+
+```text
+python -m pip install resvg-py
+python scripts/capture_chat.py --output .mariana/visual-review/current-samples
+python scripts/preview_discord.py --output .mariana/visual-review/current-samples/discord-updates.html
+```
+
 The published images use synthetic data: `usage.png` supplies
 [`docs/assets/chat.png`](assets/chat.png), and `models-narrow.png` supplies
-[`docs/assets/models.png`](assets/models.png). Review any replacement before
-publishing it; personal research should never appear in documentation screenshots.
+[`docs/assets/models.png`](assets/models.png). `discord-updates.png` supplies
+[`docs/assets/discord.png`](assets/discord.png), a synthetic recap preview rendered
+from the bot's actual embed builder. Review any replacement before publishing it;
+personal research should never appear in documentation screenshots.
 
 ## Live verification
 

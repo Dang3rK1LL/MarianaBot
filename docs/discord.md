@@ -274,3 +274,6 @@ python scripts/preview_discord.py
 
 Open `.mariana/visual-review/discord-updates.html` locally. This preview does not
 start research or contact model providers.
+With `resvg-py` installed, the script also writes a PNG of the round recap.
+See the [sample recap](assets/discord.png); it uses the current embed builder
+and synthetic data.

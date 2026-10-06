@@ -5,7 +5,7 @@ let a research team build a plan, and let a separate review team challenge it.
 Ask questions or change direction while they work. Each round, critique and
 decision stays in a local research history.
 
-![MarianaBot conversation and persistent usage display; offline demonstration.](docs/assets/chat.png)
+![MarianaBot research conversation with a readable research ID and fixed info panel showing models, efforts and usage; synthetic data.](docs/assets/chat.png)
 
 MarianaBot runs on **your own computer by default**, using your own ChatGPT and
 Claude subscription logins through the official Codex and Claude Code clients.
@@ -163,6 +163,10 @@ integration supports `/mariana ask`, `steer`, `pause`, `resume` and status updat
 You create your own bot, choose allowed users, and explicitly select which run to
 share. It is disabled by default, with private credentials kept outside Git.
 Follow the [Discord setup guide](docs/discord.md).
+
+![Discord round recap preview with the research ID, findings, changes, next steps, timing and token usage; synthetic data.](docs/assets/discord.png)
+
+Synthetic card preview; no Discord connection or model calls were made.
 
 ## Automatic updates
 

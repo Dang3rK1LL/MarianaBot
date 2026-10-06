@@ -15,7 +15,7 @@ def fixtures() -> list[dict]:
     config.rb.model, config.rb.effort = "gpt-6.1-sol", "xhigh"
     config.jb.effort = "high"
     run = dict(
-        id="preview-only",
+        id="MB-7K3M-9Q2R-5V8N",
         problem="Evaluate a paid pilot for a local repair scheduling service.",
         config=config.model_dump_json(),
         demo=True,
@@ -112,22 +112,38 @@ def svg_card(embed: dict) -> str:
     """One representative card for a portable visual review."""
     elements, y = [], 58
 
-    def text(value: str, *, bold=False, muted=False, width=76):
+    def text(value: str, *, bold=False, muted=False, width=76, x=38):
         nonlocal y
         for paragraph in value.splitlines():
             for line in textwrap.wrap(paragraph, width) or [""]:
                 elements.append(
-                    f'<text x="38" y="{y}" font-size="{14 if bold else 13}" font-weight="{600 if bold else 400}" fill="{"#aab0bb" if muted else "#e1e3e8"}">{html.escape(line)}</text>'
+                    f'<text x="{x}" y="{y}" font-size="{14 if bold else 13}" font-weight="{600 if bold else 400}" fill="{"#aab0bb" if muted else "#e1e3e8"}">{html.escape(line)}</text>'
                 )
                 y += 20
 
     text(embed["title"], bold=True)
     y += 6
     text(embed["description"])
-    for field in embed["fields"]:
+    fields = iter(embed["fields"])
+    pending = next(fields, None)
+    while pending:
         y += 14
-        text(field["name"], bold=True)
-        text(field["value"])
+        if not pending["inline"]:
+            text(pending["name"], bold=True)
+            text(pending["value"])
+            pending = next(fields, None)
+            continue
+        row = []
+        while pending and pending["inline"] and len(row) < 3:
+            row.append(pending)
+            pending = next(fields, None)
+        top, bottom = y, y
+        for column, field in enumerate(row):
+            y = top
+            text(field["name"], bold=True, width=26, x=38 + column * 202)
+            text(field["value"], width=26, x=38 + column * 202)
+            bottom = max(bottom, y)
+        y = bottom
     y += 18
     text(embed["footer"]["text"], muted=True)
     height = y + 22
@@ -162,7 +178,14 @@ footer{font-size:11px;color:#aab0bb;margin-top:20px}@media(max-width:520px){.fie
     path.with_suffix(".json").write_text(
         json.dumps(cards, indent=2, ensure_ascii=False), encoding="utf-8"
     )
-    path.with_suffix(".svg").write_text(svg_card(cards[-1]), encoding="utf-8")
+    svg = svg_card(cards[-1])
+    path.with_suffix(".svg").write_text(svg, encoding="utf-8")
+    try:
+        import resvg_py
+    except ImportError:
+        print("Install resvg-py to also render the recap as a PNG.")
+    else:
+        path.with_suffix(".png").write_bytes(resvg_py.svg_to_bytes(svg_string=svg))
     print(path.resolve())
 
 

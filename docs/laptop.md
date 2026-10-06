@@ -66,7 +66,7 @@ does not request a fallback model. Saved choices affect new runs, while an
 existing conversation retains its original settings. MB and compaction use the
 research model. The screen shows the current run's choices when one is open.
 
-![Model and effort preferences in an 80-column terminal](assets/models.png)
+![Model and effort menus showing GPT-6.1 Sol at extra high and Claude Opus 5.5 at high in an 80-column terminal; offline fixture.](assets/models.png)
 
 Older research is automatically summarized using MB's allowance. The current
 brief, pins and recorded objections stay verbatim; full originals remain saved.

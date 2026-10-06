@@ -1,5 +1,6 @@
 """Offline visual review: python scripts/capture_chat.py (optional: pip install resvg-py)."""
 
+import argparse
 import asyncio
 import os
 import tempfile
@@ -8,16 +9,16 @@ from pathlib import Path
 from unittest.mock import patch
 
 from marianabot.chat import Composer, MarianaChat
-from marianabot.config import Config
+from marianabot.config import Config, save_model_preferences
 from marianabot.engine import Engine
 from marianabot.model_catalog import ModelOption
 from marianabot.store import Store
 from marianabot.usage import normalize_usage
 
 
-async def main():
+async def main(output: Path):
     os.environ.pop("NO_COLOR", None)  # Capture the default color UI, regardless of CI logging mode.
-    output = Path(".mariana/visual-review").resolve()
+    output = output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="mariana-visual-") as temp:
         state = Path(temp)
@@ -36,13 +37,17 @@ async def main():
             app.save_screenshot("help.svg", path=str(output))
         store = Store(state)
         config = Config()
+        config.rb.model, config.rb.effort = "gpt-6.1-sol", "xhigh"
+        config.jb.effort = "high"
+        save_model_preferences(state / "mariana.toml", config, None)
         config.research.max_rounds = 2
         config.research.min_rounds = 1
-        run_id = store.create_run(
-            "Develop a 30-day pilot for a local business subscription service. Budget: EUR 2,000. Time: 10 hours per week.",
-            config,
-            demo=True,
-        )
+        with patch("marianabot.store.research_id", return_value="MB-7K3M-9Q2R-5V8N"):
+            run_id = store.create_run(
+                "Evaluate a paid pilot for a local repair scheduling service. Budget: EUR 2,000. Time: 10 hours per week.",
+                config,
+                demo=True,
+            )
         await Engine(store, run_id).run()
         store.close()
         app = MarianaChat(state, state / "mariana.toml", demo=True, run_id=run_id)
@@ -81,14 +86,18 @@ async def main():
         # Synthetic account reports exercise the working layout without contacting providers.
         fixture = state / "usage-fixture"
         store = Store(fixture)
-        run_id = store.create_run("Usage display fixture. No model calls were made.", config)
+        with patch("marianabot.store.research_id", return_value="MB-7K3M-9Q2R-5V8N"):
+            run_id = store.create_run(
+                "Evaluate a paid pilot for a local repair scheduling service. Budget: EUR 2,000. Time: 10 hours per week.\n\nSynthetic preview; no model calls were made.",
+                config,
+            )
         store.update_run(run_id, status="running", round=2)
         store.message(
             run_id,
             "plan",
             "RB",
             "Round 2 · Research plan",
-            "### Test demand before committing the budget\n\nRecruit ten local businesses for interviews this week. Offer three paid pilots before building the full service.\n\n**Open question:** will buyers pay enough to cover delivery time?\n\nJB is checking the pricing assumptions and the cost of acquiring customers.",
+            "### Test demand before committing the budget\n\nInterview ten repair shops this week. Run a two-week pilot with five shops before building the full service.\n\n**Changed:** smaller pilot, a fixed spending ceiling and explicit cancellation criteria.\n\n**Open question:** will buyers pay enough to cover delivery time?\n\nJB is checking the pricing assumptions and the cost of acquiring customers.",
         )
         now = time.time()
         for provider, brain, incoming, outgoing in (
@@ -131,7 +140,7 @@ async def main():
 
         app = MarianaChat(fixture, state / "mariana.toml", run_id=run_id, manager=PreviewManager())
         with patch.object(app, "request_usage_refresh", return_value=None):
-            async with app.run_test(size=(120, 32)) as pilot:
+            async with app.run_test(size=(120, 38)) as pilot:
                 await pilot.pause(1)
                 app.save_screenshot("usage.svg", path=str(output))
                 await pilot.resize_terminal(80, 24)
@@ -152,4 +161,6 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path, default=Path(".mariana/visual-review"))
+    asyncio.run(main(parser.parse_args().output))
