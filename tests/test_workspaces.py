@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 
 from textual.widgets import Input
@@ -74,14 +75,18 @@ async def test_live_chat_requires_folder_and_cancellation_keeps_draft(tmp_path):
         assert isinstance(chat.screen, WorkFolderScreen)
         assert not chat.store.runs() and not manager.starts
         await pilot.press("escape")
-        await pilot.pause()
+        async with asyncio.timeout(5):
+            while chat.submitting:
+                await pilot.pause(0.05)
         assert chat.query_one(Composer).text == "Keep my research problem"
         assert not chat.store.runs()
         await pilot.press("enter")
         await pilot.pause()
         chat.screen.query_one(Input).value = str(tmp_path / "chosen")
         await pilot.click("#choose-work-folder")
-        await pilot.pause()
+        async with asyncio.timeout(5):
+            while chat.submitting:
+                await pilot.pause(0.05)
         run_id = chat.run_id
         assert manager.starts == [run_id]
         assert Path(chat.store.run(run_id)["work_dir"]).parent == tmp_path / "chosen"
