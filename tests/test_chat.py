@@ -94,7 +94,8 @@ async def test_keyboard_suggestions_help_and_small_terminal(tmp_path):
         assert app.focused == app.query_one(Composer)
         await pilot.resize_terminal(120, 40)
         async with asyncio.timeout(2):
-            while app.query_one("#usage-strip").region.x == 0:
+            # Dock styles can update before the resized body has been laid out.
+            while app.query_one("#usage-strip").region.right != 120:
                 await pilot.pause(0.05)
         panel = app.query_one("#usage-strip").region
         assert panel.right == 120
