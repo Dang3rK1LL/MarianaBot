@@ -87,6 +87,14 @@ simultaneous specialists. MB and RB share OpenAI capacity; JB uses Claude capaci
 All three respect reported cooldowns. MB replies may wait behind a research call
 or for OpenAI usage to reset. Unknown Claude usage is shown as unknown.
 
+Live chat refreshes Codex allowance at every application start and every minute
+while open, including when research is idle or paused. Reopening the cloud
+shortcut also requests fresh limits when it reattaches to an existing chat.
+`/usage` refreshes Codex limits on demand and works before starting research.
+These checks read account metadata without model prompts. If a check fails,
+the last successful snapshot stays visible with its original timestamp and a
+refresh-failed label. Offline demos do not fetch account limits.
+
 Research ends at 24 rounds or 72 elapsed hours by default, or earlier on sustained
 approval, a plateau, or a need for human evidence. For a human-evidence pause,
 provide that evidence with `/steer`, then `/resume`. Reviewer scores express model

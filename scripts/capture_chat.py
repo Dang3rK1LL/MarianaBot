@@ -130,12 +130,13 @@ async def main():
                 return {"run_id": run_id, "mode": "research"}
 
         app = MarianaChat(fixture, state / "mariana.toml", run_id=run_id, manager=PreviewManager())
-        async with app.run_test(size=(120, 32)) as pilot:
-            await pilot.pause(1)
-            app.save_screenshot("usage.svg", path=str(output))
-            await pilot.resize_terminal(80, 24)
-            await pilot.pause(1)
-            app.save_screenshot("usage-narrow.svg", path=str(output))
+        with patch.object(app, "request_usage_refresh", return_value=None):
+            async with app.run_test(size=(120, 32)) as pilot:
+                await pilot.pause(1)
+                app.save_screenshot("usage.svg", path=str(output))
+                await pilot.resize_terminal(80, 24)
+                await pilot.pause(1)
+                app.save_screenshot("usage-narrow.svg", path=str(output))
     try:
         import resvg_py
     except ImportError:

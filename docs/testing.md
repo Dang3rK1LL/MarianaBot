@@ -23,7 +23,9 @@ recovery, worker locking, quota waits, streamed usage accounting, protected memo
 compaction, model preferences, terminal interaction, exports and database backups.
 Client protocol tests use fixture subprocesses; they cannot establish provider
 behavior. Model-menu tests cover provider lists, changing effort options, unavailable
-models, retry and cancellation. Discord tests cover access control, command handling,
+models, retry and cancellation. Startup-usage tests cover fresh limits on launch,
+idle polling, cloud reconnects, manual refresh, retained snapshots after failure,
+nonblocking editing and offline demos. Discord tests cover access control, command handling,
 ordered stage updates, token snapshots, message limits and durable delivery.
 Updater tests cover activation, concurrent processes, failed installs,
 local edits and private-file preservation.

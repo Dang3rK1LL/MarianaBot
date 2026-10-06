@@ -101,7 +101,15 @@ class UsageStrip(Vertical):
         yield Static("", id="limit-anthropic", markup=False)
 
     def update_usage(
-        self, totals: dict, limits: dict, *, scope: str, demo: bool, working: bool, now=None
+        self,
+        totals: dict,
+        limits: dict,
+        *,
+        scope: str,
+        demo: bool,
+        working: bool,
+        now=None,
+        codex_refresh: str = "",
     ):
         now = time.time() if now is None else now
         wide = self.size.width >= 100
@@ -142,7 +150,13 @@ class UsageStrip(Vertical):
                 "Counts belong to this MarianaBot run, not other apps using your subscriptions."
             )
             quota = self.query_one(f"#limit-{provider}", Static)
-            quota.update(quota_line(limits.get(provider, {}), demo=demo, now=now))
+            quota_text = quota_line(limits.get(provider, {}), demo=demo, now=now)
+            if provider == "openai" and codex_refresh and not demo:
+                quota_text.append(
+                    " · " + codex_refresh,
+                    style=ATTENTION if codex_refresh == "refresh failed" else MUTED,
+                )
+            quota.update(quota_text)
             quota.tooltip = "Allowance percentages are used, not remaining.\n" + "\n".join(
                 quota_line({**limits.get(provider, {}), "windows": [window]}, now=now).plain.strip()
                 for window in limits.get(provider, {}).get("windows", [])

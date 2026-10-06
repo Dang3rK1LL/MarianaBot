@@ -20,7 +20,9 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Collapsible, Footer, Markdown, OptionList, Static, TextArea
 from textual.widgets.option_list import Option
 
+from marianabot.clients import ClientError, CodexAccount
 from marianabot.config import Config, load_config, save_model_preferences
+from marianabot.limits import SubscriptionLimits
 from marianabot.models_ui import ModelsScreen
 from marianabot.reports import export_run
 from marianabot.store import Store
@@ -40,7 +42,7 @@ COMMANDS = {
     "/sessions": "Browse saved conversations",
     "/open": "Open a conversation by its ID",
     "/status": "Show research progress and recent activity",
-    "/usage": "Show the latest reported subscription limits",
+    "/usage": "Refresh Codex limits and show subscription usage",
     "/memory": "Inspect research memory and protected notes",
     "/models": "Choose models and effort for new research",
     "/pin": "Keep an instruction verbatim in future context",
@@ -234,6 +236,7 @@ class MarianaChat(App):
     TITLE = "MarianaBot"
     CSS_PATH = "chat.tcss"
     ENABLE_COMMAND_PALETTE = False
+    USAGE_REFRESH_SECONDS = 60
     BINDINGS = [
         Binding("f1", "help", "Help", priority=True),
         Binding("ctrl+n", "new", "New", priority=True, show=False),
@@ -269,6 +272,12 @@ class MarianaChat(App):
         self.awaiting_reply = False
         self.transcript_lock = asyncio.Lock()
         self.exiting = False
+        self.usage_worker = None
+        self.usage_refreshing = False
+        self.usage_error = ""
+        self.usage_complete = asyncio.Event()
+        self.usage_request_path = self.store.directory / "usage-refresh.request"
+        self.usage_request_stamp = self.usage_request_version()
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="masthead"):
@@ -309,7 +318,46 @@ class MarianaChat(App):
         self.resize_layout()
         self.set_interval(0.75, self.refresh_state)
         self.set_interval(0.8, self.save_draft)
+        self.set_interval(self.USAGE_REFRESH_SECONDS, self.request_usage_refresh)
+        self.request_usage_refresh()
         await self.refresh_state()
+
+    def usage_request_version(self):
+        try:
+            return self.usage_request_path.stat().st_mtime_ns
+        except OSError:
+            return None
+
+    def request_usage_refresh(self):
+        if self.demo or self.exiting:
+            return None
+        if self.usage_worker is not None and not self.usage_worker.is_finished:
+            return self.usage_worker
+        self.usage_refreshing = True
+        self.usage_complete.clear()
+        self.usage_worker = self.run_worker(
+            self.refresh_codex_usage(), name="Codex usage refresh", exit_on_error=False
+        )
+        return self.usage_worker
+
+    async def refresh_codex_usage(self):
+        try:
+            config = load_config(self.config_path) if self.config_path.exists() else Config()
+            workspace = self.store.directory / "account-workspace"
+            workspace.mkdir(parents=True, exist_ok=True)
+            account = await CodexAccount(config, workspace).snapshot()
+            if self.exiting or self.demo:
+                return
+            SubscriptionLimits(self.store, "openai", config.subscription).codex(account["limits"])
+            self.usage_error = ""
+        except (ClientError, OSError, ValueError):
+            # Retain the last successful snapshot and its original observation time.
+            self.usage_error = "Codex refresh failed; showing the last reported snapshot. Check the client login and network, then use /usage to retry."
+        finally:
+            self.usage_refreshing = False
+            self.usage_complete.set()
+            if self.is_running and not self.exiting:
+                await self.refresh_state()
 
     def on_resize(self):
         if self.is_mounted:
@@ -573,6 +621,11 @@ class MarianaChat(App):
             await self.open_run(argument)
         elif name == "/quit":
             self.action_detach()
+        elif name == "/usage":
+            worker = self.request_usage_refresh()
+            if worker is not None:
+                await self.usage_complete.wait()
+            await self.note("Usage", self.usage_text())
         elif name == "/load":
             path = Path(argument.strip().strip('"')).expanduser()
             if not argument or not path.is_file():
@@ -659,9 +712,8 @@ class MarianaChat(App):
             elif name == "/retry":
                 self.awaiting_reply = True
                 await self.manager.start(self.run_id, messages_only=True)
-            elif name in ("/status", "/usage"):
-                content = self.usage_text() if name == "/usage" else self.status_text()
-                await self.note(name[1:].title(), content)
+            elif name == "/status":
+                await self.note("Status", self.status_text())
             elif name == "/export":
                 # A distinct destination avoids racing the worker's automatic exports.
                 target = self.store.export_directory(self.run_id) / (
@@ -689,11 +741,12 @@ class MarianaChat(App):
         self.restore_draft()
         self.dirty = True
         self.action_compose()
+        self.request_usage_refresh()
 
     def usage_text(self):
         if self.demo:
             return "Offline demo · no subscription usage."
-        lines = []
+        lines = [self.usage_error, ""] if self.usage_error else []
         for provider, label in (("openai", "OpenAI · MB + RB"), ("anthropic", "Claude · JB")):
             data = self.store.get_limits(provider)
             lines.append(label)
@@ -735,6 +788,10 @@ class MarianaChat(App):
     async def refresh_state(self):
         if not self.is_running or self.exiting or not self.chat_screen.query(Composer):
             return
+        request_stamp = self.usage_request_version()
+        if request_stamp != self.usage_request_stamp:
+            self.usage_request_stamp = request_stamp
+            self.request_usage_refresh()
         await self.sync_messages()
         if not self.is_running or self.exiting:
             return
@@ -755,6 +812,11 @@ class MarianaChat(App):
             scope=scope,
             demo=usage_demo,
             working=bool(active and active.get("run_id") == usage_run),
+            codex_refresh="refreshing"
+            if self.usage_refreshing
+            else "refresh failed"
+            if self.usage_error
+            else "",
         )
         mode = "Offline demo" if self.demo else "Subscriptions"
         status = "New conversation"
@@ -893,6 +955,9 @@ class MarianaChat(App):
 
     def on_unmount(self):
         # on_shutdown is too late to query the composer; also save on normal unmount.
+        self.exiting = True
+        if self.usage_worker is not None:
+            self.usage_worker.cancel()
         if self.chat_screen.query(Composer):
             self.save_draft(force=True)
         self.store.close()

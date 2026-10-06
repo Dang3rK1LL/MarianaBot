@@ -9,6 +9,9 @@ if [[ $# == 0 || ( $# == 1 && "$1" == "chat" ) ]]; then
     # The systemd service owns the tmux server and detached workers.
     for _ in {1..50}; do
         if tmux -L marianabot show-options -g exit-empty >/dev/null 2>&1; then
+            # Reattaching an existing chat must also request fresh account limits.
+            mkdir -p "$HOME/.local/share/marianabot"
+            touch "$HOME/.local/share/marianabot/usage-refresh.request"
             exec tmux -L marianabot new-session -A -s mariana -c "$HOME/MarianaBot" \
                 /usr/bin/env MARIANA_SKIP_UPDATE_ONCE=1 /usr/bin/bash "$HOME/MarianaBot/deploy/chat-linux.sh"
         fi

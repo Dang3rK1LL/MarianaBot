@@ -1,7 +1,22 @@
 import pytest
 
+from marianabot.clients import ClientError
 from marianabot.config import Config
 from marianabot.store import Store
+
+
+@pytest.fixture(autouse=True)
+def offline_chat_account(monkeypatch):
+    """UI tests must explicitly supply quota fixtures instead of using real logins."""
+
+    class OfflineAccount:
+        def __init__(self, *args):
+            pass
+
+        async def snapshot(self):
+            raise ClientError("Offline account fixture")
+
+    monkeypatch.setattr("marianabot.chat.CodexAccount", OfflineAccount)
 
 
 @pytest.fixture
