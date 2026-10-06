@@ -5,6 +5,10 @@ combines MB and RB; Claude shows JB. Counts belong to the active MarianaBot run.
 you open a different conversation while a worker is running, the strip names that
 working run. Saved runs retain their totals after restart.
 
+The model row shows the RB/MB and JB models and reasoning efforts for that run.
+In a new conversation, it shows your saved choices for new research. Changes in
+`/models` appear automatically; existing research retains its saved configuration.
+
 `in` means reported input tokens, including cached input; `out` means reported
 output. Allowance percentages mean **used**. The two windows with highest reported
 usage are shown, with 5h before 7d, followed by the nearest reported reset or

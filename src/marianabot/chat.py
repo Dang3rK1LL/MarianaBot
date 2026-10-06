@@ -832,6 +832,16 @@ class MarianaChat(App):
         usage_run = active.get("run_id") if active else None
         usage_run = usage_run or self.run_id
         usage_demo = bool(self.store.run(usage_run)["demo"]) if usage_run else self.demo
+        try:
+            usage_config = (
+                Config.model_validate_json(self.store.run(usage_run)["config"])
+                if usage_run
+                else load_config(self.config_path)
+                if not usage_demo and self.config_path.exists()
+                else Config()
+            )
+        except (OSError, ValueError):
+            usage_config = None
         scope = (
             "This run"
             if usage_run == self.run_id and usage_run
@@ -843,6 +853,7 @@ class MarianaChat(App):
             self.store.usage_totals(usage_run) if usage_run else {},
             {provider: self.store.get_limits(provider) for provider in ("openai", "anthropic")},
             scope=scope,
+            config=usage_config,
             demo=usage_demo,
             working=bool(active and active.get("run_id") == usage_run),
             refresh={

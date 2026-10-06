@@ -7,6 +7,7 @@ from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Static
 
+from marianabot.config import Config
 from marianabot.limits import finite
 
 TEXT = "#d9e0e4"
@@ -96,6 +97,7 @@ def quota_line(data: dict, *, demo=False, now=None) -> Text:
 class UsageStrip(Vertical):
     def compose(self) -> ComposeResult:
         yield Static("Usage", id="usage-scope", markup=False)
+        yield Static("", id="usage-models", markup=False)
         yield Static("", id="usage-openai", markup=False)
         yield Static("", id="limit-openai", markup=False)
         yield Static("", id="usage-anthropic", markup=False)
@@ -107,6 +109,7 @@ class UsageStrip(Vertical):
         limits: dict,
         *,
         scope: str,
+        config: Config | None,
         demo: bool,
         working: bool,
         now=None,
@@ -117,6 +120,19 @@ class UsageStrip(Vertical):
         self.query_one("#usage-scope", Static).update(
             scope + " · reported tokens, incl. cache · allowance used"
         )
+        models = Text(style=MUTED)
+        if config is None:
+            models.append("Models unavailable · check /models", style=ATTENTION)
+        else:
+            for index, (label, brain) in enumerate((("RB/MB", config.rb), ("JB", config.jb))):
+                if index:
+                    models.append(" · ")
+                models.append(f"{label} ")
+                effort = "default" if brain.effort == "auto" else brain.effort
+                models.append(f"{brain.model} / {effort}", style=TEXT)
+        model_widget = self.query_one("#usage-models", Static)
+        model_widget.update(models)
+        model_widget.tooltip = models.plain
         for provider, label in (("openai", "ChatGPT MB+RB"), ("anthropic", "Claude  JB")):
             row = totals.get(provider, {})
             calls = row.get("calls", 0)

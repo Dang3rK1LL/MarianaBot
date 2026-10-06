@@ -26,7 +26,8 @@ Ask MB a question by typing normally. Use `/steer` to change the brief or answer
 MB's initial questions so those answers affect subsequent research.
 
 Both usage rows stay visible above the editor: ChatGPT covers MB + RB; Claude
-covers JB. They show this run's reported input/output tokens and account allowance
+covers JB. The row above them shows each model and its reasoning effort.
+They show this run's reported input/output tokens and account allowance
 used, reset countdowns and snapshot age. Counts refresh as client reports arrive;
 Codex totals arrive at turn completion, while Claude can report intermediate usage.
 `partial` means some usage has not been reported. See [usage reporting](usage.md).
