@@ -55,10 +55,11 @@ def quota_line(data: dict, *, demo=False, now=None) -> Text:
         if wait > 0:
             line.append(f" · waiting {duration(wait)}", style=ATTENTION)
         return line
-    # Show the highest-usage windows first, so a blocking weekly limit stays visible.
+    # Keep the busiest windows visible, with the 5-hour window displayed first.
     windows = sorted(windows, key=lambda w: finite(w.get("percent"), -1), reverse=True)
+    displayed = sorted(windows[:2], key=lambda w: window_label(w) != "5h")
     line = Text("  ", style=MUTED)
-    for index, window in enumerate(windows[:2]):
+    for index, window in enumerate(displayed):
         if index:
             line.append(" · ")
         percent = window.get("percent")

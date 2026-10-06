@@ -7,8 +7,8 @@ working run. Saved runs retain their totals after restart.
 
 `in` means reported input tokens, including cached input; `out` means reported
 output. Allowance percentages mean **used**. The two windows with highest reported
-usage are shown, followed by the nearest reported reset or current cooldown and
-snapshot age. Hover for cache details or additional windows; `/usage` refreshes and
+usage are shown, with 5h before 7d, followed by the nearest reported reset or
+current cooldown and snapshot age. Hover for cache details or additional windows; `/usage` refreshes and
 lists the full quota snapshot. Unknown values remain unknown; expired snapshots say refresh
 due instead of pretending the allowance reset. Other apps affect account allowance
 but do not contribute to MarianaBot's run token totals.
