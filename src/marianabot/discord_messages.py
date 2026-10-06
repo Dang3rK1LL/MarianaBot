@@ -41,7 +41,7 @@ def card(run: dict, title: str, description: str, fields: list[tuple], color=BLU
     # Leave room for escaping Markdown in the SDK adapter (Discord allows 6,000 total).
     remaining = 4200
     formatted = []
-    for entry in fields:
+    for entry in [("Research ID", run["id"], True), *fields]:
         name, value = entry[:2]
         if not value or remaining < 60:
             continue
@@ -51,7 +51,7 @@ def card(run: dict, title: str, description: str, fields: list[tuple], color=BLU
         formatted.append(
             dict(name=name, value=value, inline=bool(entry[2]) if len(entry) > 2 else False)
         )
-    footer = f"Run {run['id']} · Full detail in MarianaBot"
+    footer = f"Research {run['id']} · Full detail in MarianaBot"
     if run["demo"]:
         footer = "Offline demo · fixture data; no model usage · " + footer
     return dict(
@@ -79,6 +79,25 @@ def token_text(row: dict) -> str:
         for kind in ("input", "output")
     ]
     return f"{counts[0]} in / {counts[1]} out" + (" · partial" if row.get("incomplete") else "")
+
+
+def created_card(run: dict) -> dict:
+    config = Config.model_validate_json(run["config"])
+    return card(
+        run,
+        "Research created",
+        run["problem"],
+        [
+            (
+                "Models",
+                f"MB/RB: {config.rb.model} · {config.rb.effort}\nJB: {config.jb.model} · {config.jb.effort}",
+            ),
+            (
+                "Updates",
+                "Follow the brief, independent research, reviews and round recaps in this channel.",
+            ),
+        ],
+    )
 
 
 def metrics(snapshot: dict) -> list[tuple]:

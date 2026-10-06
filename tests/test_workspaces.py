@@ -1,4 +1,5 @@
 import asyncio
+import re
 from pathlib import Path
 
 from textual.widgets import Input
@@ -19,6 +20,8 @@ def test_separate_run_folders_preserve_existing_files_and_reopen(tmp_path):
     store = Store(tmp_path / "state")
     first = store.create_run("First problem", Config(), work_folder=parent)
     second = store.create_run("Second problem", Config(), work_folder=parent)
+    assert re.fullmatch(r"MB-(?:[2-9A-HJKMNP-Z]{4}-){2}[2-9A-HJKMNP-Z]{4}", first)
+    assert first != second
     first_folder = Path(store.run(first)["work_dir"])
     second_folder = Path(store.run(second)["work_dir"])
     assert first_folder != second_folder
@@ -30,6 +33,25 @@ def test_separate_run_folders_preserve_existing_files_and_reopen(tmp_path):
     assert reopened.client_directory(first).parent == first_folder
     assert reopened.export_directory(second).parent == second_folder
     reopened.close()
+
+
+def test_research_id_collisions_preserve_legacy_runs_and_existing_folders(tmp_path, monkeypatch):
+    store = Store(tmp_path / "state")
+    legacy = "abc123def456"
+    monkeypatch.setattr("marianabot.store.research_id", lambda: legacy)
+    assert store.create_run("Legacy research", Config()) == legacy
+    parent = tmp_path / "chosen"
+    occupied = parent / "research-MB-2345-6789-ABCD"
+    occupied.mkdir(parents=True)
+    (occupied / "problem.md").write_text("Existing unrelated files", encoding="utf-8")
+    candidates = iter((legacy, "MB-2345-6789-ABCD", "MB-EFGH-JKMN-PQRS"))
+    monkeypatch.setattr("marianabot.store.research_id", lambda: next(candidates))
+    run_id = store.create_run("New research", Config(), work_folder=parent)
+    assert run_id == "MB-EFGH-JKMN-PQRS"
+    assert store.run(legacy)["problem"] == "Legacy research"
+    assert (occupied / "problem.md").read_text() == "Existing unrelated files"
+    assert len(store.runs()) == 2
+    store.close()
 
 
 def test_new_cli_asks_for_folder_before_problem_and_supports_explicit_path(tmp_path):

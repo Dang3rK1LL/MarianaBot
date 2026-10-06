@@ -20,9 +20,12 @@ New live research asks for a work folder on Ubuntu before starting. The default
 is `~/MarianaBot-work`; each run gets a new `research-RUN_ID` folder. These paths
 are on the server, even when you are using the Windows shortcut. Reports refresh
 after each completed round and remain available after disconnecting.
+Research IDs use a readable random format such as `MB-7K3M-9Q2R-5V8N`.
 
 A dedicated systemd user service owns the tmux server and all its research
-processes. At service startup, interrupted research is recovered from SQLite.
+processes. The optional [Discord service](discord.md#keep-it-running-on-the-vps)
+also launches its bot there, so restarting Discord preserves research workers.
+At terminal service startup, interrupted research is recovered from SQLite.
 An explicit pause/stop, a provider/login error, completed research, and pending
 MB-only replies are **not** automatically resumed. An unexpected failure within
 the research worker can still require `/resume`; the service restarts the terminal

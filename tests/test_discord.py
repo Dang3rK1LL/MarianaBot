@@ -18,6 +18,10 @@ from marianabot.store import Store
 class Manager:
     def __init__(self):
         self.starts = []
+        self.record = None
+
+    def active(self):
+        return self.record
 
     async def start(self, run_id, *, messages_only=False):
         self.starts.append((run_id, messages_only))
@@ -84,6 +88,130 @@ async def test_uncertain_request_is_not_replayed_and_closed_run_does_not_restart
     assert "uncertain" in await command(bridge, "ask", "3", message="Should not run")
     assert not bridge.store.commands(run_id)
     assert not bridge.manager.starts
+
+
+async def test_controls_target_exact_ids_and_stop_requires_confirmation(bridge):
+    first = bridge.store.create_run("Watched research", Config(), demo=True)
+    second = bridge.store.create_run("Other research", Config(), demo=True)
+    await command(bridge, "watch", "1", run_id=first)
+    result = await command(bridge, "pause", "2", run_id=second.lower())
+    assert second in result
+    assert bridge.store.run(second)["status"] == "paused"
+    assert bridge.store.run(first)["status"] == "ready"
+    assert bridge.watch()["run_id"] == first
+    result = await command(bridge, "resume", "3", run_id=second)
+    assert second in result and bridge.manager.starts == [(second, False)]
+    preview = await command(bridge, "stop", "4", run_id=second)
+    assert second in preview and "confirm:true" in preview
+    assert bridge.store.run(second)["status"] == "paused"
+    result = await command(bridge, "stop", "5", run_id=second, confirm=True)
+    assert second in result and "cannot be resumed" in result
+    assert bridge.store.run(second)["status"] == "stopped"
+    assert bridge.store.run(second)["control"] == "stop"
+    assert await command(bridge, "stop", "5", run_id=second, confirm=True) == result
+    assert "closed" in await command(bridge, "resume", "6", run_id=second)
+    assert len(bridge.manager.starts) == 1
+    before = bridge.store.run(first)
+    assert "Specify the research ID" in await command(bridge, "stop", "7", confirm=True)
+    assert bridge.store.run(first) == before
+
+
+@pytest.mark.parametrize("action", ["ask", "steer", "pause", "resume", "retry", "stop"])
+async def test_controls_stay_disabled_without_opt_in(bridge, action):
+    bridge.config.allow_control = False
+    with pytest.raises(PermissionError):
+        await command(bridge, action)
+    assert bridge.store.db.execute("SELECT COUNT(*) FROM discord_requests").fetchone()[0] == 0
+
+
+async def test_pause_cancels_mb_without_reopening_completed_research(bridge):
+    run_id = bridge.store.create_run("Completed research", Config(), demo=True)
+    bridge.store.update_run(run_id, status="complete", reason="Completed normally")
+    bridge.manager.record = {"run_id": run_id, "mode": "messages"}
+    result = await command(bridge, "pause", run_id=run_id)
+    assert "MB reply cancellation" in result and run_id in result
+    run = bridge.store.run(run_id)
+    assert run["status"] == "complete" and run["reason"] == "Completed normally"
+    assert run["control"] == "pause"
+    assert not bridge.manager.starts
+
+
+async def test_recap_and_help_use_saved_output_without_model_calls(bridge):
+    run_id = bridge.store.create_run("Pricing research", Config(), demo=True)
+    assert run_id in await command(bridge, "recap", "1", run_id=run_id)
+    bridge.store.save_round(
+        run_id,
+        1,
+        0,
+        "## Round summary\nResearched pricing.\n## Changes this round\nReduced pilot size.",
+        review(),
+    )
+    bridge.store.begin_call(run_id, "round-2-revision-0-rb-0", "RB", "openai", "fixture")
+    result = await command(bridge, "recap", "2", run_id=run_id)
+    assert run_id in result and "Reduced pilot size" in result
+    assert "Run tokens" in result and "partial" not in result
+    assert "/mariana stop" in await command(bridge, "help", "3")
+    assert not bridge.manager.starts
+
+
+async def test_auto_follow_only_new_research_and_preserves_queued_updates_across_restart(
+    bridge, config
+):
+    from marianabot.engine import Engine
+
+    old_id = bridge.store.create_run("Older private research", config, demo=True)
+    settings = bridge.config.model_copy(update={"auto_watch_new": True})
+    automatic = DiscordBridge(bridge.store, settings, Manager())
+    automatic.collect()
+    assert not automatic.watch()
+    run_id = bridge.store.create_run("New automatic research", config, demo=True)
+    await Engine(bridge.store, run_id).run()
+    automatic.collect()
+    assert automatic.watch()["run_id"] == run_id
+    rows = bridge.store.db.execute("SELECT body,embed FROM discord_outbox ORDER BY id").fetchall()
+    assert rows[0]["body"].startswith("Research created")
+    assert any(row["body"].startswith("Round 1 complete") for row in rows)
+    assert all(run_id in row["body"] and old_id not in row["body"] for row in rows)
+    restarted = DiscordBridge(bridge.store, settings, Manager())
+    restarted.collect()
+    assert len(rows) == bridge.store.db.execute("SELECT COUNT(*) FROM discord_outbox").fetchone()[0]
+    await command(restarted, "unwatch", "100")
+    restarted.collect()
+    assert not restarted.watch()
+    next_id = bridge.store.create_run("Next research", config, demo=True)
+    restarted.collect()
+    assert restarted.watch()["run_id"] == next_id
+
+
+async def test_auto_follow_keeps_each_research_when_several_finish_between_polls(bridge, config):
+    from marianabot.engine import Engine
+
+    settings = bridge.config.model_copy(update={"auto_watch_new": True})
+    automatic = DiscordBridge(bridge.store, settings, Manager())
+    ids = []
+    for problem in ("First quick research", "Second quick research"):
+        run_id = bridge.store.create_run(problem, config, demo=True)
+        ids.append(run_id)
+        await Engine(bridge.store, run_id).run()
+    automatic.collect()
+    sent = AsyncMock()
+    while bridge.store.db.execute(
+        "SELECT COUNT(*) FROM discord_outbox WHERE delivered=0"
+    ).fetchone()[0]:
+        await automatic.deliver(sent)
+    for run_id in ids:
+        updates = [
+            call.kwargs["embed"]
+            for call in sent.call_args_list
+            if call.kwargs["embed"]["fields"][0]["value"] == run_id
+        ]
+        assert updates[0]["title"] == "Research created"
+        assert any(update["title"] == "Round 2 complete" for update in updates)
+        assert any(update["title"].startswith("Research complete") for update in updates)
+    assert automatic.watch()["run_id"] == ids[-1]
+    before = sent.await_count
+    await automatic.deliver(sent)
+    assert sent.await_count == before
 
 
 def review():
@@ -232,7 +360,15 @@ async def test_gateway_adapter_acks_first_and_restricts_mentions(bridge):
         "pause",
         "resume",
         "retry",
+        "stop",
+        "recap",
+        "help",
     }
+    for name in ("watch", "status", "recap", "ask", "steer", "pause", "resume", "stop", "retry"):
+        assert next(
+            param for param in group.get_command(name).parameters if param.name == "run_id"
+        ).autocomplete
+    run_id = bridge.store.create_run("Private pricing research", Config(), demo=True)
     denied = SimpleNamespace(
         guild_id=100,
         channel_id=200,
@@ -242,6 +378,7 @@ async def test_gateway_adapter_acks_first_and_restricts_mentions(bridge):
     await group.dispatch(denied, "sessions")
     denied.response.send_message.assert_awaited_once()
     denied.response.defer.assert_not_awaited()
+    assert await group.complete_research(denied, "") == []
     interaction = SimpleNamespace(
         guild_id=100,
         channel_id=200,
@@ -255,6 +392,15 @@ async def test_gateway_adapter_acks_first_and_restricts_mentions(bridge):
         interaction.response.defer.assert_awaited_once_with(ephemeral=True, thinking=True)
         return "*" * 3000 + "@everyone"
 
+    choices = await group.complete_research(interaction, "pricing")
+    assert [choice.value for choice in choices] == [run_id]
+    assert run_id in choices[0].name
+    interaction.response.autocomplete = AsyncMock()
+    interaction.response.is_done = lambda: False
+    await group.get_command("watch")._invoke_autocomplete(
+        interaction, "run_id", SimpleNamespace(run_id="pricing")
+    )
+    assert interaction.response.autocomplete.call_args.args[0][0].value == run_id
     bridge.command = check_ack
     await group.dispatch(interaction, "status")
     reply = interaction.edit_original_response.call_args.kwargs

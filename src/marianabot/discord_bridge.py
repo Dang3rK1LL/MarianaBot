@@ -10,6 +10,7 @@ from marianabot.config import Config
 from marianabot.discord_config import DiscordConfig
 from marianabot.discord_messages import (
     card_text,
+    created_card,
     message_card,
     recap_card,
     round_start_card,
@@ -93,6 +94,13 @@ class DiscordBridge:
             CREATE TABLE IF NOT EXISTS discord_requests (
                 scope TEXT NOT NULL, request_id TEXT NOT NULL, response TEXT NOT NULL,
                 PRIMARY KEY(scope,request_id));
+            CREATE TABLE IF NOT EXISTS discord_auto_follow (
+                scope TEXT PRIMARY KEY, last_run INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS discord_auto_watch (
+                scope TEXT NOT NULL, run_id TEXT NOT NULL, epoch TEXT NOT NULL,
+                last_round INTEGER NOT NULL, last_message INTEGER NOT NULL,
+                last_state TEXT NOT NULL, last_event INTEGER NOT NULL,
+                PRIMARY KEY(scope,run_id));
         """)
         if "last_event" not in {
             row[1] for row in store.db.execute("PRAGMA table_info(discord_watch)")
@@ -104,6 +112,101 @@ class DiscordBridge:
         if "embed" not in {row[1] for row in store.db.execute("PRAGMA table_info(discord_outbox)")}:
             with store.db:
                 store.db.execute("ALTER TABLE discord_outbox ADD COLUMN embed TEXT")
+        if config.auto_watch_new:
+            with store.db:
+                store.db.execute(
+                    "INSERT OR IGNORE INTO discord_auto_follow SELECT ?,COALESCE(MAX(rowid),0) FROM runs",
+                    (self.scope,),
+                )
+
+    def research_choices(self, current: str) -> list[dict]:
+        search = current.strip().lower()
+        return [
+            dict(row)
+            for row in self.store.db.execute(
+                "SELECT id,status,SUBSTR(problem,1,65) AS problem FROM runs "
+                "WHERE instr(lower(id),?) OR instr(lower(problem),?) ORDER BY created DESC LIMIT 25",
+                (search, search),
+            )
+        ]
+
+    def _set_watch(self, run: dict, *, replay=False, clear_pending=True):
+        run_id = run["id"]
+        cursor = (
+            0
+            if replay
+            else self.store.db.execute(
+                "SELECT COALESCE(MAX(id),0) FROM chat_messages WHERE run_id=?", (run_id,)
+            ).fetchone()[0]
+        )
+        event_cursor = (
+            0
+            if replay
+            else self.store.db.execute(
+                "SELECT COALESCE(MAX(id),0) FROM events WHERE run_id=?", (run_id,)
+            ).fetchone()[0]
+        )
+        if clear_pending:
+            self.store.db.execute(
+                "DELETE FROM discord_outbox WHERE scope=? AND delivered=0", (self.scope,)
+            )
+            self.store.db.execute("DELETE FROM discord_auto_watch WHERE scope=?", (self.scope,))
+        self.store.db.execute(
+            "INSERT OR REPLACE INTO discord_watch(scope,run_id,epoch,last_round,last_message,last_state,last_event) VALUES(?,?,?,?,?,?,?)",
+            (
+                self.scope,
+                run_id,
+                uuid.uuid4().hex,
+                0 if replay else run["round"],
+                cursor,
+                ""
+                if replay and run["status"] in ("complete", "paused", "stopped")
+                else self._state(run),
+                event_cursor,
+            ),
+        )
+
+    def _advance_follow(self):
+        self.store.db.execute(
+            "UPDATE discord_auto_follow SET last_run=(SELECT COALESCE(MAX(rowid),0) FROM runs) WHERE scope=?",
+            (self.scope,),
+        )
+
+    def _follow_new(self):
+        if not self.config.auto_watch_new:
+            return
+        with self.store.transaction():
+            runs = self.store.db.execute(
+                "SELECT rowid AS follow_id,* FROM runs WHERE rowid>(SELECT last_run FROM discord_auto_follow WHERE scope=?) ORDER BY rowid LIMIT 20",
+                (self.scope,),
+            ).fetchall()
+            for run in runs:
+                self._set_watch(dict(run), replay=True, clear_pending=False)
+                watched = self.watch()
+                self.store.db.execute(
+                    "INSERT INTO discord_auto_watch SELECT scope,run_id,epoch,last_round,last_message,last_state,last_event FROM discord_watch WHERE scope=?",
+                    (self.scope,),
+                )
+                self._queue(f"{watched['epoch']}:created", created_card(dict(run)))
+                self.store.db.execute(
+                    "UPDATE discord_auto_follow SET last_run=? WHERE scope=?",
+                    (run["follow_id"], self.scope),
+                )
+
+    def _save_watch(self, watched: dict, *, automatic=False):
+        values = (
+            watched["last_round"],
+            watched["last_message"],
+            watched["last_state"],
+            watched["last_event"],
+            self.scope,
+            watched["run_id"],
+            watched["epoch"],
+        )
+        query = "UPDATE {} SET last_round=?,last_message=?,last_state=?,last_event=? WHERE scope=? AND run_id=? AND epoch=?"
+        self.store.db.execute(query.format("discord_watch"), values)
+        if automatic:
+            self.store.db.execute(query.format("discord_auto_watch"), values)
 
     def watch(self):
         row = self.store.db.execute(
@@ -119,7 +222,9 @@ class DiscordBridge:
             )
         return response
 
-    async def command(self, *, guild, channel, user, request_id, action, run_id="", message=""):
+    async def command(
+        self, *, guild, channel, user, request_id, action, run_id="", message="", confirm=False
+    ):
         self.config.authorize(guild, channel, user)
         if action not in {
             "sessions",
@@ -131,9 +236,15 @@ class DiscordBridge:
             "pause",
             "resume",
             "retry",
+            "stop",
+            "recap",
+            "help",
         }:
             raise ValueError("Unknown command.")
-        if action in {"ask", "steer", "pause", "resume", "retry"} and not self.config.allow_control:
+        if (
+            action in {"ask", "steer", "pause", "resume", "retry", "stop"}
+            and not self.config.allow_control
+        ):
             raise PermissionError(
                 "Remote control is disabled in this installation's Discord settings."
             )
@@ -156,12 +267,32 @@ class DiscordBridge:
                     ),
                 )
             try:
-                response = await self._apply(action, run_id, message)
+                response = await self._apply(action, run_id, message, confirm)
             except (ValueError, OSError) as exc:
                 response = "Could not complete command: " + excerpt(str(exc), 500)
             return self._response(str(request_id), response)
 
-    async def _apply(self, action, run_id, message):
+    async def _apply(self, action, run_id, message, confirm):
+        if action == "help":
+            return (
+                "/mariana sessions — list research IDs and topics\n"
+                "/mariana watch run_id — choose research for channel updates\n"
+                "/mariana status — progress, models, tokens and allowance\n"
+                "/mariana recap — latest completed round\n"
+                "/mariana ask message — ask MB a question\n"
+                "/mariana steer message — change the next round's brief\n"
+                "/mariana pause — save progress and cancel active requests\n"
+                "/mariana resume — continue from checkpoints\n"
+                "/mariana retry — retry unanswered MB questions\n"
+                "/mariana stop run_id confirm:true — permanently end research\n"
+                "/mariana unwatch — disconnect updates; research continues\n\n"
+                "Use run_id autocomplete to search by ID or topic. With no ID, commands use the watched research.\n"
+                + (
+                    "Controls are enabled for the permitted accounts only."
+                    if self.config.allow_control
+                    else "Remote controls are disabled in this installation."
+                )
+            )
         if action == "sessions":
             rows = self.store.db.execute(
                 "SELECT id,status,round,SUBSTR(problem,1,90) AS problem FROM runs ORDER BY created DESC LIMIT 12"
@@ -176,72 +307,117 @@ class DiscordBridge:
         if action == "unwatch":
             with self.store.db:
                 self.store.db.execute("DELETE FROM discord_watch WHERE scope=?", (self.scope,))
+                self.store.db.execute("DELETE FROM discord_auto_watch WHERE scope=?", (self.scope,))
                 self.store.db.execute(
                     "DELETE FROM discord_outbox WHERE scope=? AND delivered=0", (self.scope,)
                 )
+                self._advance_follow()
             return "Updates disconnected. Research continues on its host."
+        watched = self.watch()
+        if action == "stop" and not run_id:
+            raise ValueError(
+                "Specify the research ID to stop. Use /mariana sessions or run_id autocomplete."
+            )
+        selected = run_id.strip() if run_id else watched["run_id"] if watched else ""
+        if not selected or (action == "watch" and not run_id):
+            return "Select research with /mariana sessions, then /mariana watch run_id."
+        row = self.store.db.execute(
+            "SELECT id FROM runs WHERE id=? COLLATE NOCASE", (selected,)
+        ).fetchone()
+        if not row:
+            raise ValueError(f"Unknown research ID: {selected}")
+        run_id = row["id"]
+        run = self.store.run(run_id)
+
+        def reply(text):
+            return f"Research {run_id}\n{text}"
+
         if action == "watch":
-            run = self.store.run(run_id)
-            cursor = self.store.db.execute(
-                "SELECT COALESCE(MAX(id),0) FROM chat_messages WHERE run_id=?", (run_id,)
-            ).fetchone()[0]
-            event_cursor = self.store.db.execute(
-                "SELECT COALESCE(MAX(id),0) FROM events WHERE run_id=?", (run_id,)
-            ).fetchone()[0]
             with self.store.db:
-                self.store.db.execute(
-                    "DELETE FROM discord_outbox WHERE scope=? AND delivered=0", (self.scope,)
-                )
-                self.store.db.execute(
-                    "INSERT OR REPLACE INTO discord_watch(scope,run_id,epoch,last_round,last_message,last_state,last_event) VALUES(?,?,?,?,?,?,?)",
-                    (
-                        self.scope,
-                        run_id,
-                        uuid.uuid4().hex,
-                        run["round"],
-                        cursor,
-                        self._state(run),
-                        event_cursor,
-                    ),
-                )
+                self._set_watch(run)
+                self._advance_follow()
             return (
                 "Watching research stages, recaps, MB replies and state changes in this channel.\n\n"
                 + status_text(self.store, run_id)
             )
-        watched = self.watch()
-        if not watched:
-            return "Select research with /mariana sessions, then /mariana watch run_id."
-        run_id = watched["run_id"]
-        run = self.store.run(run_id)
         if action == "status":
             return status_text(self.store, run_id)
+        if action == "recap":
+            row = self.store.db.execute(
+                "SELECT * FROM rounds WHERE run_id=? ORDER BY number DESC LIMIT 1", (run_id,)
+            ).fetchone()
+            if not row:
+                return reply("No completed round yet. Use /mariana status for current progress.")
+            event = self.store.db.execute(
+                "SELECT payload FROM events WHERE run_id=? AND kind='round_complete' AND json_extract(payload,'$.number')=? ORDER BY id DESC LIMIT 1",
+                (run_id, row["number"]),
+            ).fetchone()
+            return excerpt(
+                card_text(
+                    self._recap(run, dict(row), json.loads(event["payload"]) if event else None)
+                ),
+                1800,
+            )
         if action in ("ask", "steer"):
             command_id = self.store.enqueue(run_id, action, message)
             if action == "ask":
                 try:
                     await self.manager.start(run_id, messages_only=True)
                 except (ValueError, OSError):
-                    return f"Question #{command_id} is saved, but MB could not start. Check the local worker and use /mariana retry."
-            return f"Saved {action} #{command_id}. " + (
-                "MB's reply will appear here; allowance waits still apply."
-                if action == "ask"
-                else "Applied at the next research round boundary. A paused run stays paused until /mariana resume."
-            )
+                    return reply(
+                        f"Question #{command_id} is saved, but MB could not start. Check the local worker and use /mariana retry run_id:{run_id}."
+                    )
+            if action == "steer":
+                detail = "Applied at the next research round boundary. A paused run stays paused until /mariana resume."
+            elif watched and watched["run_id"] == run_id:
+                detail = "MB's reply will appear here; allowance waits still apply."
+            else:
+                detail = f"Follow MB's reply with /mariana watch run_id:{run_id}; allowance waits still apply."
+            return reply(f"Saved {action} #{command_id}. {detail}")
         if action == "retry":
             if not self.store.pending_questions(run_id):
-                return "No unanswered MB questions."
+                return reply("No unanswered MB questions.")
             await self.manager.start(run_id, messages_only=True)
-            return "MB reply worker requested. Research is not resumed."
-        if run["status"] in ("complete", "stopped"):
-            return "This research is closed. You can still ask MB questions or start a new problem locally."
-        if action == "pause":
-            self.store.update_run(
-                run_id, control="pause", status="paused", reason="Paused through Discord"
+            return reply("MB reply worker requested. Research is not resumed.")
+        active = self.manager.active()
+        if (
+            action == "pause"
+            and active
+            and active.get("run_id") == run_id
+            and active.get("mode") == "messages"
+        ):
+            self.store.update_run(run_id, control="pause")
+            self.store.event(run_id, "Owner requested MB reply cancellation through Discord")
+            return reply(
+                f"MB reply cancellation requested. Research remains {run['status']}; /mariana retry can answer pending questions later."
             )
-            self.store.event(run_id, "Owner requested pause through Discord")
-            return "Pause requested. Completed work is saved; an in-flight request may already have consumed usage."
-        await self.manager.start(run_id)
-        return "Research worker requested. Saved model choices, billing controls and quota waits still apply."
+        if run["status"] in ("complete", "stopped"):
+            return reply(
+                "This research is closed. You can still ask MB questions or start a new problem locally."
+            )
+        if action == "stop" and confirm is not True:
+            return reply(
+                f"Permanently end this research? Use /mariana stop run_id:{run_id} confirm:true. Saved work will be retained."
+            )
+        if action in ("pause", "stop"):
+            self.store.update_run(
+                run_id,
+                control=action,
+                status="paused" if action == "pause" else "stopped",
+                reason=f"{'Paused' if action == 'pause' else 'Stopped'} through Discord",
+            )
+            self.store.event(run_id, f"Owner requested {action} through Discord")
+            return reply(
+                "Pause requested. Completed work is saved; an in-flight request may already have consumed usage."
+                if action == "pause"
+                else "Research stopped. Active requests are being cancelled; saved work is retained. This run cannot be resumed."
+            )
+        started = await self.manager.start(run_id)
+        return reply(
+            "Research worker requested. Saved model choices, billing controls and quota waits still apply."
+            if started
+            else "Research is already working."
+        )
 
     @staticmethod
     def _state(run):
@@ -267,9 +443,17 @@ class DiscordBridge:
 
     def collect(self):
         """Commit messages and their source cursors together, before any network call."""
+        self._follow_new()
+        automatic = self.store.db.execute(
+            "SELECT * FROM discord_auto_watch WHERE scope=? ORDER BY rowid", (self.scope,)
+        ).fetchall()
+        for row in automatic:
+            self._collect_watch(dict(row), automatic=True)
         watched = self.watch()
-        if not watched:
-            return
+        if watched and watched["run_id"] not in {row["run_id"] for row in automatic}:
+            self._collect_watch(watched)
+
+    def _collect_watch(self, watched: dict, *, automatic=False):
         run_id, epoch = watched["run_id"], watched["epoch"]
         run = self.store.run(run_id)
         with self.store.transaction():
@@ -318,15 +502,7 @@ class DiscordBridge:
                         watched["last_round"] = max(watched["last_round"], row["number"])
                 watched["last_event"] = event["id"]
             if len(sources) == 100:
-                self.store.db.execute(
-                    "UPDATE discord_watch SET last_event=?,last_round=?,last_message=? WHERE scope=?",
-                    (
-                        watched["last_event"],
-                        watched["last_round"],
-                        watched["last_message"],
-                        self.scope,
-                    ),
-                )
+                self._save_watch(watched, automatic=automatic)
                 return
             for row in self.store.db.execute(
                 "SELECT * FROM rounds WHERE run_id=? AND number>? ORDER BY number LIMIT 10",
@@ -345,16 +521,17 @@ class DiscordBridge:
                         history[-1]["review"] if history else None,
                     ),
                 )
-            self.store.db.execute(
-                "UPDATE discord_watch SET last_round=?,last_message=?,last_state=?,last_event=? WHERE scope=?",
-                (
-                    watched["last_round"],
-                    watched["last_message"],
-                    state,
-                    watched["last_event"],
-                    self.scope,
-                ),
-            )
+            watched["last_state"] = state
+            self._save_watch(watched, automatic=automatic)
+            if (
+                automatic
+                and run["status"] in ("complete", "stopped")
+                and watched["last_round"] >= run["round"]
+            ):
+                self.store.db.execute(
+                    "DELETE FROM discord_auto_watch WHERE scope=? AND run_id=?",
+                    (self.scope, run_id),
+                )
 
     async def deliver(self, send):
         async with self.guard:

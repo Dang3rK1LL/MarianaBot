@@ -4,9 +4,10 @@ Connect your own bot to one private text channel to follow research from your
 phone. Research updates use clean, colored cards with the current question,
 stage, findings, changes, next direction and reported usage. Each round shows
 independent research, plan synthesis, independent critique and the review decision.
-The `/mariana status` command includes detailed allowance and context information.
-You can also ask the master brain,
-steer the brief, pause and resume.
+Every card includes the research ID. New research uses readable random IDs such
+as `MB-7K3M-9Q2R-5V8N`; existing IDs remain valid. `/mariana status` includes
+allowance and context information. You can ask MB, steer the brief, pause,
+resume, retrieve the latest recap, or permanently stop a specific run.
 
 This integration is optional. A normal install does not include the Discord SDK,
 open a Discord connection or share research. Each person creates their own bot,
@@ -77,6 +78,10 @@ file and is removed from worker and model-client environments.
 `discord.toml` stores your choices and the absolute research directory. The
 settings file, token file and research are ignored by Git. Setup never overwrites
 existing files; edit your private settings to change them, then restart the bot.
+Set `auto_watch_new = true` to automatically share research created after the
+bot first starts with this option. It defaults to false and does not share older
+research. Set `allow_control = true` to enable the listed research controls for
+the allowed accounts.
 An empty user list is invalid. Changing the destination or access policy requires
 selecting a run again. Custom config paths are supported with `--config`; keep
 any renamed private files outside the repository or add your own Git exclusion.
@@ -105,23 +110,39 @@ In your private Discord channel:
 /mariana sessions
 /mariana watch run_id:YOUR_RUN_ID
 /mariana status
+/mariana recap
+/mariana help
 /mariana ask message:What changed in the last round?
 /mariana steer message:Limit the pilot to EUR 500 and interview five customers.
 /mariana pause
 /mariana resume
+/mariana stop run_id:YOUR_RUN_ID confirm:true
 /mariana unwatch
 ```
 
 Choose slash commands from Discord's command picker; these are structured
 commands, not ordinary chat messages. Commands are registered only in your
 configured server. Every request checks the server, channel and user allowlist
-again on the host. DMs, other channels and other users are refused. A user who
+again on the host, including before showing autocomplete suggestions. A user who
 can read the channel can read posted research even if they cannot control it.
+DMs, other channels and other users are refused.
+
+The `run_id` field suggests IDs with their topics and status. Search by ID or
+topic, or paste the exact ID; matching is case insensitive. Status, recap,
+questions, steering, pause, resume and retry accept an optional ID. Without it,
+they target the selected research. Controls name their target in the response.
+`stop` requires an explicit ID and `confirm:true`; omitting confirmation changes
+nothing. A stopped run cannot resume, and its saved work remains available.
 
 `watch` explicitly connects one run to the channel. It posts future research stages,
 completed rounds, MB replies and state changes, including locally initiated MB dialogue.
-It does not backfill an entire historical transcript or subscribe to new runs
-automatically. `unwatch` drops unsent updates and leaves research running.
+It does not backfill an entire historical transcript. With `auto_watch_new`, new
+research gets a creation card and its own durable updates, including if it
+finishes between polls or the bot restarts. The newest run becomes the default
+command target. Manually using `watch` selects one run and disconnects the
+others; subsequent new research is still followed automatically. `unwatch`
+disconnects current updates, drops unsent posts and leaves research running.
+Automatic following starts again for the next newly created run.
 Messages already sent to Discord remain there.
 
 Command acknowledgements are visible only to the caller. **MB answers and
@@ -133,6 +154,7 @@ to formatted text.
 
 ### What appears during research
 
+- **Research created:** the ID, problem and selected models when automatic following is enabled.
 - **Preparing the research brief / Research brief ready:** MB defines the
   objective, constraints, assumptions and evidence needed.
 - **Round started:** the research question, current focus, previous review and
@@ -162,32 +184,14 @@ boundary and leaves a paused run paused. `pause` needs no model call. `resume`
 uses the run's saved models and billing controls. MB requests still consume the
 research provider's subscription allowance and may wait for a reset. Use
 `/mariana retry` if an MB question was saved but its worker could not start.
-Start new problems, change models, export files and permanently stop research
-in the main application; Discord does not expose shell commands or file access.
+`recap` reads the latest saved round without requesting a new model response.
+Start new problems, choose work folders, change models and export files in the
+main application; Discord does not expose shell commands or file access.
 
 ## Keep it running on the VPS
 
-With the terminal service from the server guide already installed, start the
-bot inside that service's tmux server. This keeps Discord-started workers under
-the same persistent service as terminal-started workers:
-
-```bash
-systemctl --user start marianabot-terminal
-tmux -L marianabot new-session -d -s mariana-discord \
-  'cd ~/MarianaBot && exec .venv/bin/mariana discord run --data-dir ~/.local/share/marianabot'
-```
-
-Inspect its console with `tmux -L marianabot attach -t mariana-discord`; detach
-with Ctrl+B, then D. Closing SSH leaves it running. To stop only the bot,
-attach and press Ctrl+C. Research workers remain managed by the terminal service.
-Do not run a second copy on your laptop using the same token.
-
-The tmux setup supports remote controls. Start its bot session again after a
-VPS reboot or terminal-service restart. Research recovery follows the existing
-server rules independently.
-
-For round notifications with controls disabled, install the dedicated user
-service instead. Set `allow_control = false` in `discord.toml` first:
+With the terminal service from the server guide already installed, enable the
+managed Discord service:
 
 ```bash
 cp deploy/marianabot-discord.service ~/.config/systemd/user/
@@ -195,10 +199,25 @@ systemctl --user daemon-reload
 systemctl --user enable --now marianabot-discord.service
 ```
 
-This service starts at boot when user lingering is enabled and restarts on
-failure. It requires both private configuration and token files. It refuses
-remote controls so restarting the notification service cannot stop research
-workers started through it. Do not run the service and tmux bot together.
+This service supervises a `mariana-discord` session in the terminal service's
+tmux server. Bot-started workers stay under the terminal service, so restarting
+Discord keeps them running. It starts at boot with user lingering enabled,
+restarts on failure and supports controls when `allow_control = true`. It
+requires the terminal service and both private settings and token files.
+
+```bash
+systemctl --user restart marianabot-discord.service
+systemctl --user stop marianabot-discord.service
+```
+
+Inspect its console with `tmux -L marianabot attach -t mariana-discord`; detach
+with Ctrl+B, then D. Stop it with systemctl; closing its pane directly makes the
+supervisor restart it. Do not run a second bot copy in another tmux session or
+on your laptop. Research recovery follows the existing server rules when the
+terminal service restarts.
+
+For a foreground install that only sends updates,
+`mariana discord run --notifications-only` still refuses `allow_control = true`.
 
 When configuration is already prepared, `mariana discord token` saves the token
 through a hidden prompt. Use `--replace` to replace a saved token atomically.
@@ -206,7 +225,7 @@ The Windows
 `MarianaBot-Discord-Setup.cmd` shortcut uses `mariana-server.json` to open a
 masked Windows token dialog. Its Paste button and Ctrl+V accept clipboard input.
 It verifies the bot and channel, saves the token on Ubuntu through SSH without
-a local token file, and starts the installed notification service.
+a local token file, and starts the installed Discord service.
 
 ## Delivery and metric limits
 

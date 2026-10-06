@@ -597,7 +597,7 @@ class MarianaChat(App):
         run_id = self.store.create_run(problem, config, demo=self.demo, work_folder=folder)
         await self.open_run(run_id)
         await self.note(
-            "Research started",
+            f"Research started · {run_id}",
             "MB is preparing your brief. Replies will appear here as each stage finishes. You can keep writing; use **/steer** to change direction or **/pause** to take a break.\n\n"
             + "Research files: "
             + self.store.run(run_id)["work_dir"],
@@ -871,10 +871,10 @@ class MarianaChat(App):
         status = "New conversation"
         if self.run_id:
             run = self.store.run(self.run_id)
-            status = f"{run['status'].capitalize()} · round {run['round']}"
+            status = f"{self.run_id} · {run['status'].capitalize()} · round {run['round']}"
             attached = active and active.get("run_id") == self.run_id
             if run["status"] == "running" and not attached:
-                status = "Worker disconnected · /resume to reconnect"
+                status = f"{self.run_id} · Worker disconnected · /resume to reconnect"
             pending = self.store.pending_questions(self.run_id)
             if pending:
                 status += f" · {pending} MB pending"

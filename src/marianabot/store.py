@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import secrets
 import sqlite3
 import time
 import uuid
@@ -11,6 +12,12 @@ from pathlib import Path
 from marianabot.config import Config
 from marianabot.usage import FIELDS, normalize_usage
 from marianabot.workspaces import resolve_work_folder
+
+
+def research_id() -> str:
+    # Omit characters that are easy to confuse when reading an ID aloud.
+    value = "".join(secrets.choice("23456789ABCDEFGHJKMNPQRSTUVWXYZ") for _ in range(12))
+    return "MB-" + "-".join(value[index : index + 4] for index in range(0, 12, 4))
 
 
 class Store:
@@ -113,14 +120,23 @@ class Store:
     ) -> str:
         if not problem.strip() or len(problem) > 100000:
             raise ValueError("The problem must contain 1–100,000 characters")
-        run_id = uuid.uuid4().hex[:12]
         parent = resolve_work_folder(
             work_folder if work_folder is not None else self.directory / "work"
         )
-        work_dir = parent / f"research-{run_id}"
-        work_dir.mkdir(parents=True, exist_ok=False, mode=0o700)
-        (work_dir / "problem.md").write_text(problem + "\n", encoding="utf-8")
-        with self.db:
+        with self.transaction():
+            for _ in range(16):
+                run_id = research_id()
+                if self.db.execute("SELECT 1 FROM runs WHERE id=?", (run_id,)).fetchone():
+                    continue
+                work_dir = parent / f"research-{run_id}"
+                try:
+                    work_dir.mkdir(parents=True, exist_ok=False, mode=0o700)
+                except FileExistsError:
+                    continue
+                break
+            else:
+                raise ValueError("Could not allocate a unique research ID. Try again.")
+            (work_dir / "problem.md").write_text(problem + "\n", encoding="utf-8")
             self.db.execute(
                 "INSERT INTO runs(id,problem,config,demo,created,status,work_dir) VALUES(?,?,?,?,?,?,?)",
                 (

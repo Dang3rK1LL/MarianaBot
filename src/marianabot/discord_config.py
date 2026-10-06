@@ -20,6 +20,7 @@ class DiscordConfig(StrictModel):
     channel_id: Snowflake
     allowed_user_ids: list[Snowflake] = Field(min_length=1, max_length=20)
     allow_control: bool = False
+    auto_watch_new: bool = False
     data_dir: Path = Path(".mariana")
     token_file: Path = Path("discord-token.txt")
     poll_seconds: int = Field(default=15, ge=5, le=300)
@@ -28,6 +29,8 @@ class DiscordConfig(StrictModel):
     def scope(self) -> str:
         # Changing the destination or access policy requires an explicit new /watch.
         policy = (self.guild_id, self.channel_id, sorted(self.allowed_user_ids), self.allow_control)
+        if self.auto_watch_new:
+            policy += ("auto_watch_new",)
         return hashlib.sha256(json.dumps(policy).encode()).hexdigest()[:24]
 
     def authorize(self, guild: int | None, channel: int | None, user: int):

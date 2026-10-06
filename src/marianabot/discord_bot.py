@@ -86,6 +86,10 @@ class ResearchCommands(app_commands.Group):
     async def sessions(self, interaction: discord.Interaction):
         await self.dispatch(interaction, "sessions")
 
+    @app_commands.command(description="Show research commands and how to select a research ID")
+    async def help(self, interaction: discord.Interaction):
+        await self.dispatch(interaction, "help")
+
     @app_commands.command(
         description="Connect one run to this channel; share future round updates and MB replies"
     )
@@ -97,40 +101,80 @@ class ResearchCommands(app_commands.Group):
         await self.dispatch(interaction, "unwatch")
 
     @app_commands.command(description="Show the watched run's status, usage and memory")
-    async def status(self, interaction: discord.Interaction):
-        await self.dispatch(interaction, "status")
+    async def status(self, interaction: discord.Interaction, run_id: str = ""):
+        await self.dispatch(interaction, "status", run_id=run_id)
+
+    @app_commands.command(description="Show the latest completed round's findings and changes")
+    async def recap(self, interaction: discord.Interaction, run_id: str = ""):
+        await self.dispatch(interaction, "recap", run_id=run_id)
 
     @app_commands.command(
-        description="Ask the master brain; its reply will be posted to this channel"
+        description="Ask MB about the selected research; replies are posted for watched runs"
     )
     async def ask(
-        self, interaction: discord.Interaction, message: app_commands.Range[str, 1, 4000]
+        self,
+        interaction: discord.Interaction,
+        message: app_commands.Range[str, 1, 4000],
+        run_id: str = "",
     ):
-        await self.dispatch(interaction, "ask", message=message)
+        await self.dispatch(interaction, "ask", message=message, run_id=run_id)
 
     @app_commands.command(
         description="Change the brief at the next round boundary; does not resume paused research"
     )
     async def steer(
-        self, interaction: discord.Interaction, message: app_commands.Range[str, 1, 4000]
+        self,
+        interaction: discord.Interaction,
+        message: app_commands.Range[str, 1, 4000],
+        run_id: str = "",
     ):
-        await self.dispatch(interaction, "steer", message=message)
+        await self.dispatch(interaction, "steer", message=message, run_id=run_id)
 
     @app_commands.command(description="Pause research and save completed work")
-    async def pause(self, interaction: discord.Interaction):
-        await self.dispatch(interaction, "pause")
+    async def pause(self, interaction: discord.Interaction, run_id: str = ""):
+        await self.dispatch(interaction, "pause", run_id=run_id)
 
     @app_commands.command(
         description="Resume the watched research using its saved model and billing settings"
     )
-    async def resume(self, interaction: discord.Interaction):
-        await self.dispatch(interaction, "resume")
+    async def resume(self, interaction: discord.Interaction, run_id: str = ""):
+        await self.dispatch(interaction, "resume", run_id=run_id)
+
+    @app_commands.command(description="Permanently stop this research; saved work is retained")
+    @app_commands.describe(confirm="Set true to permanently end the specified research")
+    async def stop(self, interaction: discord.Interaction, run_id: str, confirm: bool = False):
+        await self.dispatch(interaction, "stop", run_id=run_id, confirm=confirm)
 
     @app_commands.command(
         description="Start a reply worker for unanswered MB questions without resuming research"
     )
-    async def retry(self, interaction: discord.Interaction):
-        await self.dispatch(interaction, "retry")
+    async def retry(self, interaction: discord.Interaction, run_id: str = ""):
+        await self.dispatch(interaction, "retry", run_id=run_id)
+
+    @watch.autocomplete("run_id")
+    @status.autocomplete("run_id")
+    @recap.autocomplete("run_id")
+    @ask.autocomplete("run_id")
+    @steer.autocomplete("run_id")
+    @pause.autocomplete("run_id")
+    @resume.autocomplete("run_id")
+    @stop.autocomplete("run_id")
+    @retry.autocomplete("run_id")
+    async def complete_research(self, interaction: discord.Interaction, current: str):
+        # Autocomplete bypasses command checks, so authorize before reading any topics.
+        try:
+            self.bridge.config.authorize(
+                interaction.guild_id, interaction.channel_id, interaction.user.id
+            )
+        except PermissionError:
+            return []
+        return [
+            app_commands.Choice(
+                name=excerpt(f"{row['id']} · {row['status']} · {row['problem']}", 100),
+                value=row["id"],
+            )
+            for row in self.bridge.research_choices(current)
+        ]
 
     async def on_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         log.error("Discord interaction failed (%s).", type(error).__name__)
@@ -179,7 +223,12 @@ class MarianaDiscord(discord.Client):
             print(
                 "Discord connected. Research cards "
                 + ("enabled" if self.embed_enabled else "using text fallback")
-                + ". Use /mariana sessions, then /mariana watch to select research.",
+                + ". Use /mariana help for commands. "
+                + (
+                    "New research is followed automatically."
+                    if self.bridge.config.auto_watch_new
+                    else "Use /mariana sessions, then /mariana watch to select research."
+                ),
                 flush=True,
             )
         except Exception as exc:

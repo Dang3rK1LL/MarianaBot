@@ -1,16 +1,22 @@
-"""Boot recovery and consistent database backups for a single-user Linux server."""
+"""Linux service helpers for research recovery, backups and Discord supervision."""
 
 import argparse
 import asyncio
 import os
+import shlex
+import signal
 import sqlite3
+import subprocess
+import sys
 import time
 from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Event
 
 from filelock import FileLock, Timeout
 
+from marianabot.runtime import installation_root
 from marianabot.store import Store
 from marianabot.worker import WorkerManager, atomic_json
 
@@ -77,15 +83,82 @@ def backup(directory: Path, destination: Path) -> Path:
     return target
 
 
+def discord_service(directory: Path, config: Path, *, stop: Event | None = None):
+    """Supervise the bot in the terminal service's tmux server so workers survive bot restarts."""
+    if sys.platform != "linux":
+        raise ValueError("The managed Discord service requires the Linux terminal service.")
+
+    def tmux(*args):
+        return subprocess.run(["tmux", "-L", "marianabot", *args], capture_output=True, text=True)
+
+    server = tmux("show-options", "-s", "-v", "exit-empty")
+    if server.returncode or server.stdout.strip() != "off":
+        raise ValueError("Start marianabot-terminal.service before the managed Discord service.")
+    if not tmux("has-session", "-t", "=mariana-discord").returncode:
+        raise ValueError(
+            "A mariana-discord tmux session already exists; do not start a second bot."
+        )
+    root = installation_root() or Path.cwd()
+    command = shlex.join(
+        [
+            "env",
+            f"MARIANA_INSTALL_ROOT={root}",
+            sys.executable,
+            "-m",
+            "marianabot",
+            "--no-update",
+            "discord",
+            "run",
+            "--config",
+            str(config.resolve()),
+            "--data-dir",
+            str(directory.resolve()),
+        ]
+    )
+    started = tmux(
+        "new-session",
+        "-d",
+        "-P",
+        "-F",
+        "#{session_id}",
+        "-s",
+        "mariana-discord",
+        "-c",
+        str(root),
+        command,
+    )
+    if started.returncode or not started.stdout.strip():
+        raise ValueError("Could not start the managed Discord session. Check the terminal service.")
+    session = started.stdout.strip()
+    stop = stop or Event()
+    handlers = {}
+    try:
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            handlers[sig] = signal.signal(sig, lambda *_: stop.set())
+        while not stop.wait(1):
+            if tmux("has-session", "-t", session).returncode:
+                raise ValueError("The Discord bot exited. Check its private settings and token.")
+    finally:
+        tmux("kill-session", "-t", session)
+        for sig, handler in handlers.items():
+            signal.signal(sig, handler)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("recover", "backup"))
+    parser.add_argument("action", choices=("recover", "backup", "discord"))
     parser.add_argument("--data-dir", type=Path, required=True)
     parser.add_argument("--destination", type=Path)
+    parser.add_argument("--config", type=Path, default=Path("discord.toml"))
     args = parser.parse_args()
     if args.action == "recover":
         resumed = asyncio.run(recover(args.data_dir))
         print("Interrupted research resumed." if resumed else "No research needs recovery.")
+    elif args.action == "discord":
+        try:
+            discord_service(args.data_dir, args.config)
+        except (ValueError, OSError) as exc:
+            parser.exit(1, str(exc) + "\n")
     elif args.destination is None:
         parser.error("backup needs --destination")
     else:

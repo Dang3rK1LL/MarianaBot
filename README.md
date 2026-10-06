@@ -111,14 +111,16 @@ their default. Loading the lists does not generate model responses. Preferences
 apply to new research, while existing runs keep their saved settings.
 
 The app starts its worker and client processes itself. Reopening chat reconnects
-to saved work. One research worker runs per data directory. On a laptop, keep it
+to saved work. New research has a readable random ID such as `MB-7K3M-9Q2R-5V8N`,
+shown in chat, saved folders and Discord updates. Older IDs still work.
+One research worker runs per data directory. On a laptop, keep it
 awake and online; after reboot, reopen and `/resume`. A deliberately paused run
 stays paused. See the [daily-use guide](docs/laptop.md) and
 [scriptable CLI](docs/operations.md).
 
 ## Usage and memory
 
-ChatGPT and Claude usage stay visible above the editor: reported input/output
+ChatGPT and Claude usage stay in the fixed info panel: reported input/output
 tokens, active calls, account allowance and reset times when provided. Missing
 values stay unknown; incomplete totals are marked partial. This is provider
 telemetry, not a guaranteed live balance. Other apps share your allowance.

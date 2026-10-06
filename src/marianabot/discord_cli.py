@@ -44,7 +44,7 @@ def setup(config: Path = Path("discord.toml"), data_dir: Path = Path(".mariana")
         channel = typer.prompt("Private text channel ID", type=int)
         users = typer.prompt("Allowed Discord user IDs, separated by commas")
         control = typer.confirm(
-            "Allow these users to ask MB, steer, pause and resume research?", default=False
+            "Allow these users to ask MB, steer, pause, resume and stop research?", default=False
         )
         enabled = typer.confirm(
             "Enable this integration when you explicitly run the bot?", default=False
