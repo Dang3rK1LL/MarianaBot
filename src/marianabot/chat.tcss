@@ -10,7 +10,7 @@ Screen { background: #171d24; color: #d9e0e4; }
 #welcome-copy { height: auto; color: #a6afb8; }
 #usage-strip { dock: top; height: auto; padding: 0 2; }
 #usage-strip Static { height: auto; }
-#chat-body.wide #usage-strip { dock: right; width: 56; border-left: solid #46545e; }
+#chat-body.wide #usage-strip { dock: right; width: 64; border-left: solid #46545e; }
 #usage-scope { color: #a6afb8; }
 .message { height: auto; margin-bottom: 2; }
 .speaker { height: auto; margin-bottom: 1; color: #92c9cb; text-style: bold; }

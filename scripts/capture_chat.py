@@ -140,7 +140,7 @@ async def main(output: Path):
 
         app = MarianaChat(fixture, state / "mariana.toml", run_id=run_id, manager=PreviewManager())
         with patch.object(app, "request_usage_refresh", return_value=None):
-            async with app.run_test(size=(120, 38)) as pilot:
+            async with app.run_test(size=(128, 38)) as pilot:
                 await pilot.pause(1)
                 app.save_screenshot("usage.svg", path=str(output))
                 await pilot.resize_terminal(80, 24)
