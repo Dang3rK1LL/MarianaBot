@@ -119,8 +119,10 @@ async def test_outbox_survives_failure_restart_and_unwatch(bridge):
     text = sent.call_args.args[0]
     assert "Reduced pilot size" in text and "Interview five" in text
     assert "UNWATCHED SECRET" not in text
-    assert "compactions:" in text and "native token window remaining: unknown" in text
-    assert len(text) <= 1950
+    assert "Run tokens" in text and "Elapsed:" in text
+    assert "compactions:" not in text and "native token window remaining" not in text
+    assert len(text) <= 5800
+    assert sent.call_args.kwargs["embed"]["title"] == "Round 1 complete"
     await restarted.deliver(sent)
     assert sent.await_count == 1
     store.message(run_id, "reply-fixture", "MB", "Reply", "An answer @everyone")
@@ -267,3 +269,123 @@ async def test_gateway_adapter_acks_first_and_restricts_mentions(bridge):
     assert "@everyone" not in message.args[0]
     assert message.kwargs["suppress_embeds"]
     await bot.close()
+
+
+async def test_round_starts_are_ordered_with_recaps_and_survive_restart(bridge):
+    from marianabot.engine import Engine
+
+    store = bridge.store
+    config = Config()
+    config.research.max_rounds = 2
+    config.research.min_rounds = 1
+    run_id = store.create_run("Round notification test", config, demo=True)
+    await command(bridge, "watch", run_id=run_id)
+    await Engine(store, run_id).run()
+    bridge.collect()
+    bodies = [row[0] for row in store.db.execute("SELECT body FROM discord_outbox ORDER BY id")]
+    round_messages = [
+        body
+        for body in bodies
+        if body.splitlines()[0]
+        in {"Round 1/2 started", "Round 1 complete", "Round 2/2 started", "Round 2 complete"}
+    ]
+    assert len(round_messages) == 4
+    assert round_messages[0].startswith("Round 1/2 started")
+    assert round_messages[1].startswith("Round 1 complete")
+    assert round_messages[2].startswith("Round 2/2 started")
+    assert round_messages[3].startswith("Round 2 complete")
+    assert all(len(body) < 5800 for body in round_messages)
+    assert all("Offline demo" in body for body in round_messages)
+    assert "Round:" in round_messages[1]
+    titles = [body.splitlines()[0] for body in bodies]
+    assert titles[:7] == [
+        "Preparing the research brief",
+        "Research brief ready",
+        "Round 1/2 started",
+        "Round 1 · Plan synthesis",
+        "Round 1 · Independent critique",
+        "Round 1 · Review decision",
+        "Round 1 complete",
+    ]
+    before = len(bodies)
+    restarted = DiscordBridge(store, bridge.config, Manager())
+    restarted.collect()
+    assert store.db.execute("SELECT COUNT(*) FROM discord_outbox").fetchone()[0] == before
+    assert (store.export_directory(run_id) / "history.json").is_file()
+
+
+async def test_recap_uses_usage_at_completion_and_does_not_reannounce_cached_round(bridge):
+    store = bridge.store
+    run_id = store.create_run("Usage snapshot", Config(), demo=True)
+    await command(bridge, "watch", run_id=run_id)
+    for _ in range(2):
+        store.event(
+            run_id,
+            "Started",
+            kind="round_started",
+            payload={"number": 1, "revision": 0, "max_rounds": 24, "focus": "Test assumptions"},
+        )
+    store.save_round(run_id, 1, 0, "## Round summary\nTested pricing.", review())
+    store.begin_call(run_id, "round-2-revision-0-rb-0", "RB", "openai", "fixture")
+    bridge.collect()
+    bodies = [row[0] for row in store.db.execute("SELECT body FROM discord_outbox ORDER BY id")]
+    assert len(bodies) == 2
+    assert "ChatGPT: 0 in / 0 out" in bodies[1]
+    assert "partial" not in bodies[1]
+
+
+def test_hidden_token_command_never_echoes_or_overwrites(tmp_path, monkeypatch):
+    monkeypatch.delenv("MARIANA_DISCORD_BOT_TOKEN", raising=False)
+    config = tmp_path / "discord.toml"
+    settings = DiscordConfig(guild_id=100, channel_id=200, allowed_user_ids=[300])
+    config.write_text(
+        "guild_id = 100\nchannel_id = 200\nallowed_user_ids = [300]\n", encoding="utf-8"
+    )
+    result = CliRunner().invoke(
+        app, ["discord", "token", "--config", str(config)], input="fixture-private-token\n"
+    )
+    assert result.exit_code == 0
+    assert "fixture-private-token" not in result.stdout
+    assert (tmp_path / settings.token_file).read_text().strip() == "fixture-private-token"
+    assert "fixture-private-token" not in config.read_text()
+    repeated = CliRunner().invoke(
+        app, ["discord", "token", "--config", str(config)], input="replacement\n"
+    )
+    assert repeated.exit_code == 2
+    assert (tmp_path / settings.token_file).read_text().strip() == "fixture-private-token"
+    replaced = CliRunner().invoke(
+        app,
+        ["discord", "token", "--config", str(config), "--replace"],
+        input="fixture-updated-token\n",
+    )
+    assert replaced.exit_code == 0
+    assert "fixture-updated-token" not in replaced.stdout
+    assert (tmp_path / settings.token_file).read_text().strip() == "fixture-updated-token"
+    assert not list(tmp_path.glob(".discord-token-*.token"))
+
+
+@pytest.mark.parametrize("value", ["\x1b[1", "fixture-private-token\x1b[1", "short"])
+def test_token_command_rejects_failed_paste_without_replacing_token(tmp_path, monkeypatch, value):
+    config = tmp_path / "discord.toml"
+    config.write_text("guild_id = 100\nchannel_id = 200\nallowed_user_ids = [300]\n")
+    settings = load_discord(config)
+    write_private(settings.token_file, "fixture-existing-token\n")
+    monkeypatch.setattr("marianabot.discord_cli.typer.prompt", lambda *args, **kwargs: value)
+    result = CliRunner().invoke(app, ["discord", "token", "--config", str(config), "--replace"])
+    assert result.exit_code == 2
+    assert "complete token was not received" in result.stdout
+    assert settings.token_file.read_text().strip() == "fixture-existing-token"
+
+
+@pytest.mark.parametrize("value", ["\x1b[1", "fixture-token\x7f", "fixture\ntoken"])
+def test_token_reader_rejects_console_control_characters(tmp_path, monkeypatch, value):
+    monkeypatch.delenv("MARIANA_DISCORD_BOT_TOKEN", raising=False)
+    settings = DiscordConfig(
+        guild_id=100,
+        channel_id=200,
+        allowed_user_ids=[300],
+        token_file=tmp_path / "discord-token.txt",
+    )
+    write_private(settings.token_file, value)
+    with pytest.raises(ValueError, match="invalid characters"):
+        read_token(settings)

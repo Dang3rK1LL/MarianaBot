@@ -10,6 +10,7 @@ from pathlib import Path
 
 from marianabot.config import Config
 from marianabot.usage import FIELDS, normalize_usage
+from marianabot.workspaces import resolve_work_folder
 
 
 class Store:
@@ -64,6 +65,15 @@ class Store:
         """)
         # Additive migration for stores created before the interactive chat.
         with self.transaction():
+            run_columns = {row[1] for row in self.db.execute("PRAGMA table_info(runs)")}
+            if "work_dir" not in run_columns:
+                self.db.execute("ALTER TABLE runs ADD COLUMN work_dir TEXT NOT NULL DEFAULT ''")
+            event_columns = {row[1] for row in self.db.execute("PRAGMA table_info(events)")}
+            for column, default in (("kind", ""), ("payload", "{}")):
+                if column not in event_columns:
+                    self.db.execute(
+                        f"ALTER TABLE events ADD COLUMN {column} TEXT NOT NULL DEFAULT '{default}'"
+                    )
             if "commands" not in {
                 row[1] for row in self.db.execute("PRAGMA table_info(research_memory)")
             }:
@@ -98,17 +108,41 @@ class Store:
             self.db.rollback()
             raise
 
-    def create_run(self, problem: str, config: Config, demo: bool = False) -> str:
+    def create_run(
+        self, problem: str, config: Config, demo: bool = False, *, work_folder: Path | None = None
+    ) -> str:
         if not problem.strip() or len(problem) > 100000:
             raise ValueError("The problem must contain 1–100,000 characters")
         run_id = uuid.uuid4().hex[:12]
+        parent = resolve_work_folder(
+            work_folder if work_folder is not None else self.directory / "work"
+        )
+        work_dir = parent / f"research-{run_id}"
+        work_dir.mkdir(parents=True, exist_ok=False, mode=0o700)
+        (work_dir / "problem.md").write_text(problem + "\n", encoding="utf-8")
         with self.db:
             self.db.execute(
-                "INSERT INTO runs(id,problem,config,demo,created,status) VALUES(?,?,?,?,?,?)",
-                (run_id, problem, config.model_dump_json(), demo, time.time(), "ready"),
+                "INSERT INTO runs(id,problem,config,demo,created,status,work_dir) VALUES(?,?,?,?,?,?,?)",
+                (
+                    run_id,
+                    problem,
+                    config.model_dump_json(),
+                    demo,
+                    time.time(),
+                    "ready",
+                    str(work_dir),
+                ),
             )
             self._message(run_id, "problem", "you", "Your problem", problem)
         return run_id
+
+    def client_directory(self, run_id: str) -> Path:
+        work_dir = self.run(run_id)["work_dir"]
+        return (Path(work_dir) if work_dir else self.directory) / "client-workspace"
+
+    def export_directory(self, run_id: str) -> Path:
+        work_dir = self.run(run_id)["work_dir"]
+        return Path(work_dir) / "exports" if work_dir else self.directory / "exports" / run_id
 
     def message(self, run_id: str, key: str, role: str, title: str, text: str):
         with self.db:
@@ -198,12 +232,15 @@ class Store:
                     "UPDATE runs SET control_epoch=control_epoch+1 WHERE id=?", (run_id,)
                 )
 
-    def event(self, run_id: str, message: str):
+    def event(self, run_id: str, message: str, *, kind: str = "", payload: dict | None = None):
         with self.db:
-            self.db.execute(
-                "INSERT INTO events(run_id,created,text) VALUES(?,?,?)",
-                (run_id, time.time(), message),
-            )
+            self._event(run_id, message, kind=kind, payload=payload)
+
+    def _event(self, run_id: str, message: str, *, kind: str = "", payload: dict | None = None):
+        self.db.execute(
+            "INSERT INTO events(run_id,created,text,kind,payload) VALUES(?,?,?,?,?)",
+            (run_id, time.time(), message, kind, json.dumps(payload or {})),
+        )
 
     def events(self, run_id: str, count: int = 12) -> list[dict]:
         return [
@@ -258,7 +295,11 @@ class Store:
         with self.db:
             self._record_usage(call_id, usage, final, time.time())
 
-    def usage_totals(self, run_id: str) -> dict[str, dict]:
+    def usage_totals(self, run_id: str, *, task_prefix: str | None = None) -> dict[str, dict]:
+        task_filter = " AND substr(c.task,1,?)=?" if task_prefix is not None else ""
+        parameters = (
+            (run_id, len(task_prefix), task_prefix) if task_prefix is not None else (run_id,)
+        )
         rows = self.db.execute(
             """
             SELECT c.provider, COUNT(*) AS calls, COUNT(u.call_id) AS reported_calls,
@@ -271,9 +312,11 @@ class Store:
                    SUM(CASE WHEN u.final=1 AND u.input_tokens IS NOT NULL AND u.output_tokens IS NOT NULL THEN 0 ELSE 1 END) AS incomplete,
                    MAX(u.reported_at) AS reported_at
             FROM calls c LEFT JOIN call_usage u ON c.id=u.call_id
-            WHERE c.run_id=? GROUP BY c.provider
-        """,
-            (run_id,),
+            WHERE c.run_id=?
+        """
+            + task_filter
+            + " GROUP BY c.provider",
+            parameters,
         )
         return {row["provider"]: dict(row) for row in rows}
 
@@ -293,6 +336,27 @@ class Store:
             )
             self.db.execute("UPDATE runs SET round=? WHERE id=?", (number, run_id))
             self._protect_review(run_id, number, review)
+            now = time.time()
+            started = self.db.execute(
+                "SELECT MIN(created) FROM events WHERE run_id=? AND kind='round_started' "
+                "AND json_extract(payload,'$.number')=? AND json_extract(payload,'$.revision')=?",
+                (run_id, number, revision),
+            ).fetchone()[0]
+            self._event(
+                run_id,
+                f"Round {number} complete",
+                kind="round_complete",
+                payload={
+                    "number": number,
+                    "revision": revision,
+                    "elapsed": now - self.run(run_id)["created"],
+                    "duration": now - started if started is not None else None,
+                    "usage": self.usage_totals(run_id),
+                    "round_usage": self.usage_totals(
+                        run_id, task_prefix=f"round-{number}-revision-{revision}-"
+                    ),
+                },
+            )
 
     def _protect_review(self, run_id: str, number: int, review: dict):
         for kind in ("blocking_issues", "dissent", "human_tests"):

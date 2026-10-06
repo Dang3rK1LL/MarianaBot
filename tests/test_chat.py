@@ -1,5 +1,4 @@
 import asyncio
-from pathlib import Path
 
 from textual import events
 from textual.widgets import OptionList
@@ -141,7 +140,7 @@ async def test_invalid_action_preserves_draft_and_load_is_editable(tmp_path):
         await pilot.press("enter")
         await pilot.pause()
         await send(app, pilot, "/export")
-        assert list(Path(tmp_path / "state" / "exports").rglob("conversation.md"))
+        assert list(app.store.export_directory(app.run_id).rglob("conversation.md"))
 
 
 async def test_typing_remains_responsive_while_worker_starts(tmp_path):

@@ -57,8 +57,8 @@ def read_token(config: DiscordConfig) -> str:
         if os.name != "nt" and config.token_file.stat().st_mode & 0o077:
             raise ValueError("The bot token file must be private: chmod 600 on that file.")
         token = config.token_file.read_text(encoding="utf-8").strip()
-    if not token or any(character.isspace() for character in token):
-        raise ValueError("Bot token is empty or contains whitespace. Replace it locally.")
+    if not token or any(ord(character) <= 32 or ord(character) >= 127 for character in token):
+        raise ValueError("Bot token is empty or contains invalid characters. Replace it locally.")
     return token
 
 

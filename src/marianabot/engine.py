@@ -20,6 +20,7 @@ from marianabot.prompts import (
     Review,
     prompt,
 )
+from marianabot.reports import export_run
 from marianabot.store import Store
 
 
@@ -81,8 +82,8 @@ class Engine:
         self.limits = {
             p: SubscriptionLimits(store, p, self.config.subscription) for p in self.gates
         }
-        client_dir = store.directory / "client-workspace"
-        client_dir.mkdir(exist_ok=True)
+        client_dir = store.client_directory(run_id)
+        client_dir.mkdir(parents=True, exist_ok=True)
         self.account = CodexAccount(self.config, client_dir)
         self.clients = clients or {
             p: DemoClient()
@@ -92,9 +93,24 @@ class Engine:
         }
         self.memory = Compactor(self)
 
-    def emit(self, message: str):
-        self.store.event(self.run_id, message)
+    def emit(self, message: str, *, kind: str = "", payload: dict | None = None):
+        self.store.event(self.run_id, message, kind=kind, payload=payload)
         self.log(message)
+
+    def stage(self, stage: str, number: int = 0, **details):
+        run = self.store.run(self.run_id)
+        self.emit(
+            f"Research stage · {stage} · round {number}",
+            kind="research_stage",
+            payload={
+                "stage": stage,
+                "number": number,
+                "revision": run["revision"],
+                "elapsed": time.time() - run["created"],
+                "usage": self.store.usage_totals(self.run_id),
+                **details,
+            },
+        )
 
     def check(self):
         if self.shutdown.is_set():
@@ -110,11 +126,23 @@ class Engine:
 
     async def wait(self, seconds: float, reason: str):
         self.emit(f"{reason}; wait up to {seconds:.0f}s")
+        if seconds >= 60:
+            self.emit(
+                reason,
+                kind="research_wait",
+                payload={"reason": reason, "seconds": seconds, "resumed": False},
+            )
         end = time.time() + seconds
         while time.time() < end:
             self.check()
             await asyncio.sleep(min(1, max(0, end - time.time())))
         self.check()
+        if seconds >= 60:
+            self.emit(
+                "Research wait finished",
+                kind="research_wait",
+                payload={"reason": reason, "seconds": seconds, "resumed": True},
+            )
 
     async def preflight(self):
         if self.demo:
@@ -304,6 +332,7 @@ class Engine:
         await self.memory.advance()
         run = self.store.run(self.run_id)
         if not run["brief"]:
+            self.stage("intake")
             intake = await self.call(
                 "MB", "mb-intake", MASTER_INTAKE, {"owner_problem": run["problem"]}
             )
@@ -327,9 +356,20 @@ class Engine:
             number = run["round"] + 1
             if number > self.config.research.max_rounds:
                 raise Halt("complete", "Configured round limit reached")
-            self.emit(f"Round {number}/{self.config.research.max_rounds} · RB court")
             prefix = f"round-{number}-revision-{run['revision']}"
             previous = history[-1] if history else {}
+            self.emit(
+                f"Round {number}/{self.config.research.max_rounds} · RB court",
+                kind="round_started",
+                payload={
+                    "number": number,
+                    "max_rounds": self.config.research.max_rounds,
+                    "revision": run["revision"],
+                    "focus": previous.get("review", {}).get("next_prompt") or run["problem"],
+                    "previous_review": previous.get("review", {}),
+                    "roles": [RB_ROLES[i % len(RB_ROLES)] for i in range(self.config.rb.agents)],
+                },
+            )
             data = {
                 "problem": run["problem"],
                 "brief": run["brief"],
@@ -349,6 +389,12 @@ class Engine:
                     for i in range(self.config.rb.agents)
                 ]
             )
+            self.stage(
+                "synthesis",
+                number,
+                agents=len(researchers),
+                focus=previous.get("review", {}).get("next_prompt") or run["problem"],
+            )
             synthesis = await self.call(
                 "RB",
                 f"{prefix}-synthesis",
@@ -363,6 +409,13 @@ class Engine:
                 synthesis["text"],
             )
             self.emit(f"Round {number} · JB court")
+            self.stage(
+                "critique",
+                number,
+                agents=self.config.jb.agents,
+                plan=synthesis["text"],
+                roles=[JB_ROLES[i % len(JB_ROLES)] for i in range(self.config.jb.agents)],
+            )
             judging = {
                 "problem": run["problem"],
                 "brief": run["brief"],
@@ -382,6 +435,12 @@ class Engine:
                     for i in range(self.config.jb.agents)
                 ]
             )
+            self.stage(
+                "verdict",
+                number,
+                agents=len(critics),
+                critiques=[r["text"][:400] for r in critics],
+            )
             chair = await self.call(
                 "JB",
                 f"{prefix}-verdict",
@@ -396,6 +455,7 @@ class Engine:
                 self.run_id, number, run["revision"], synthesis["text"], chair["review"]
             )
             await self.memory.advance()
+            export_run(self.store, self.run_id, self.store.export_directory(self.run_id))
             self.emit(
                 f"Round {number} checkpoint · score {chair['review']['score']}/100 · {chair['review']['verdict']}"
             )

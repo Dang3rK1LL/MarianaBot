@@ -16,6 +16,11 @@ server. Reopen the shortcut to reattach. `/quit` closes the chat window while
 research continues. `/pause` stops research at its saved checkpoints. `/resume`
 continues it. Reconnecting from two terminals shows the same screen.
 
+New live research asks for a work folder on Ubuntu before starting. The default
+is `~/MarianaBot-work`; each run gets a new `research-RUN_ID` folder. These paths
+are on the server, even when you are using the Windows shortcut. Reports refresh
+after each completed round and remain available after disconnecting.
+
 A dedicated systemd user service owns the tmux server and all its research
 processes. At service startup, interrupted research is recovered from SQLite.
 An explicit pause/stop, a provider/login error, completed research, and pending
@@ -87,6 +92,21 @@ The shortcut uses that saved host key and refuses an unexpected replacement.
 The connection profile contains the key's path, never its contents.
 
 ## Backups and maintenance
+
+For a standalone Codex installation, install the daily CLI update timer:
+
+```bash
+cp deploy/marianabot-codex-update.service deploy/marianabot-codex-update.timer \
+   ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now marianabot-codex-update.timer
+systemctl --user start marianabot-codex-update.service
+```
+
+The timer runs the official `codex update` command once a day. It holds MarianaBot's
+launch and worker locks and defers if research is active or starting. It preserves
+the configured models, account login and research files. Check its most recent
+result with `journalctl --user -u marianabot-codex-update.service -n 20`.
 
 The daily timer takes a consistent SQLite backup, including committed WAL data,
 checks its integrity, and retains seven days in `~/.local/share/marianabot-backups`.

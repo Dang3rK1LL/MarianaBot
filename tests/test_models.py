@@ -1,9 +1,31 @@
 import pytest
 from textual.widgets import Input, Select
+from textual.widgets._select import InvalidSelectValueError
 
 from marianabot.chat import Composer, MarianaChat
 from marianabot.config import DEFAULT_TOML, Config, load_config, save_model_preferences
+from marianabot.model_catalog import ModelOption
 from marianabot.models_ui import ModelsScreen
+
+CATALOGS = {
+    "rb": [
+        ModelOption("gpt-6-astra", "GPT-6 Astra", ("low", "medium", "high", "xhigh", "max")),
+        ModelOption("future-research-model", "Future research", ("medium",), "medium"),
+    ],
+    "jb": [
+        ModelOption("claude-opus-5-5", "Opus 5.5", ("low", "medium", "high", "xhigh", "max")),
+        ModelOption("future-judge-model", "Future judge", ("high", "max"), "high"),
+        ModelOption("claude-haiku-fixture", "Haiku", (), "auto"),
+    ],
+}
+
+
+@pytest.fixture(autouse=True)
+def offline_catalogs(monkeypatch):
+    async def load(provider, config, cwd):
+        return CATALOGS[provider]
+
+    monkeypatch.setattr("marianabot.models_ui.load_models", load)
 
 
 class FakeManager:
@@ -64,10 +86,12 @@ async def test_models_screen_saves_new_run_preferences_without_changing_existing
         await pilot.pause()
         assert isinstance(app.screen, ModelsScreen)
         assert app.screen.query_one("#save-models").region.bottom < 24
-        assert app.screen.query_one("#rb-model", Input).value == "gpt-6-astra"
-        app.screen.query_one("#rb-model", Input).value = "future-research-model"
+        assert app.screen.query_one("#rb-model", Select).value == "gpt-6-astra"
+        app.screen.query_one("#rb-model", Select).value = "future-research-model"
+        await pilot.pause()
         app.screen.query_one("#rb-effort", Select).value = "medium"
-        app.screen.query_one("#jb-model", Input).value = "future-judge-model"
+        app.screen.query_one("#jb-model", Select).value = "future-judge-model"
+        await pilot.pause()
         app.screen.query_one("#jb-effort", Select).value = "max"
         await pilot.click("#save-models")
         await pilot.pause()
@@ -79,32 +103,127 @@ async def test_models_screen_saves_new_run_preferences_without_changing_existing
             Config.model_validate_json(app.store.run(old_run)["config"]).rb.model == "gpt-6-astra"
         )
         await app.new_conversation(False)
-        await app.start_problem("New research with saved preferences")
+        app.query_one(Composer).load_text("New research with saved preferences")
+        await pilot.press("enter")
+        await pilot.pause()
+        app.screen.query_one("#work-folder", Input).value = str(tmp_path / "work")
+        await pilot.click("#choose-work-folder")
+        await pilot.pause()
         snapshot = Config.model_validate_json(app.store.run(app.run_id)["config"])
         assert snapshot == saved
         app.action_models()
         await pilot.pause()
         await pilot.click("#default-models")
         await pilot.pause()
-        assert app.screen.query_one("#rb-model", Input).value == "gpt-6-astra"
+        assert app.screen.query_one("#rb-model", Select).value == "gpt-6-astra"
         await pilot.press("escape")
         await pilot.pause()
         assert load_config(path) == saved  # Defaults are only persisted after Save.
 
 
-async def test_invalid_model_stays_editable_and_cancel_preserves_draft(tmp_path):
+async def test_unavailable_saved_model_requires_selection_and_cancel_preserves_draft(tmp_path):
     path = tmp_path / "mariana.toml"
+    path.write_text(DEFAULT_TOML.replace('model = "gpt-6-astra"', 'model = "unavailable-model"'))
+    original = path.read_text()
     app = MarianaChat(tmp_path / "state", path, demo=True, manager=FakeManager())
     async with app.run_test(size=(80, 24)) as pilot:
         app.query_one(Composer).load_text("A long business problem to keep")
         app.action_models()
         await pilot.pause()
-        app.screen.query_one("#rb-model", Input).value = "invalid model; shell"
         await pilot.click("#save-models")
         await pilot.pause()
         assert isinstance(app.screen, ModelsScreen)
-        assert "Enter a model ID" in str(app.screen.query_one("#model-error").content)
+        assert "Choose an available ChatGPT model" in str(
+            app.screen.query_one("#model-error").content
+        )
         await pilot.press("escape")
         await pilot.pause()
-        assert not path.exists()
+        assert path.read_text() == original
         assert app.query_one(Composer).text == "A long business problem to keep"
+
+
+async def test_effort_menu_changes_with_model_and_fixed_effort_is_disabled(tmp_path):
+    app = MarianaChat(
+        tmp_path / "state", tmp_path / "mariana.toml", demo=True, manager=FakeManager()
+    )
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.action_models()
+        await pilot.pause()
+        screen = app.screen
+        assert (
+            screen.query_one("#rb-model", Select).region.width
+            > screen.query_one("#rb-effort", Select).region.width
+        )
+        screen.query_one("#rb-model", Select).value = "future-research-model"
+        await pilot.pause()
+        effort = screen.query_one("#rb-effort", Select)
+        assert effort.value == "medium"
+        with pytest.raises(InvalidSelectValueError):
+            effort.value = "max"
+        screen.query_one("#jb-model", Select).value = "claude-haiku-fixture"
+        await pilot.pause()
+        assert screen.query_one("#jb-effort", Select).disabled
+        assert screen.query_one("#jb-effort", Select).value == "auto"
+        await pilot.click("#save-models")
+        await pilot.pause()
+        assert load_config(tmp_path / "mariana.toml").jb.effort == "auto"
+
+
+async def test_provider_failure_disables_save_and_retry_recovers(tmp_path, monkeypatch):
+    from marianabot.clients import ClientError
+
+    async def failing(provider, config, cwd):
+        if provider == "jb":
+            raise ClientError("fixture failure")
+        return CATALOGS[provider]
+
+    monkeypatch.setattr("marianabot.models_ui.load_models", failing)
+    app = MarianaChat(
+        tmp_path / "state", tmp_path / "mariana.toml", demo=True, manager=FakeManager()
+    )
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.action_models()
+        await pilot.pause()
+        assert app.screen.query_one("#save-models").disabled
+        assert "Claude: Model list unavailable" in str(
+            app.screen.query_one("#model-status").content
+        )
+        assert not app.screen.query_one("#retry-models").disabled
+
+        async def recovered(provider, config, cwd):
+            return CATALOGS[provider]
+
+        monkeypatch.setattr("marianabot.models_ui.load_models", recovered)
+        await pilot.click("#retry-models")
+        await pilot.pause()
+        assert not app.screen.query_one("#save-models").disabled
+
+
+async def test_closing_models_cancels_pending_provider_queries_and_keeps_draft(
+    tmp_path, monkeypatch
+):
+    import asyncio
+
+    started, cancelled = set(), set()
+
+    async def loading(provider, config, cwd):
+        started.add(provider)
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.add(provider)
+
+    monkeypatch.setattr("marianabot.models_ui.load_models", loading)
+    app = MarianaChat(
+        tmp_path / "state", tmp_path / "mariana.toml", demo=True, manager=FakeManager()
+    )
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.query_one(Composer).load_text("Keep this research draft")
+        app.action_models()
+        await pilot.pause()
+        assert started == {"rb", "jb"}
+        assert app.screen.query_one("#save-models").disabled
+        await pilot.press("escape")
+        await pilot.pause()
+        assert cancelled == started
+        assert app.query_one(Composer).text == "Keep this research draft"

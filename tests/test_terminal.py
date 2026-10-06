@@ -13,4 +13,4 @@ def test_dashboard_handles_legacy_output_encoding(tmp_path):
     )
     assert result.returncode == 0, result.stderr.decode("utf-8", errors="replace")
     assert "COMPLETE" in result.stdout.decode("utf-8")
-    assert list((tmp_path / "demo" / "exports").glob("*/report.md"))
+    assert list((tmp_path / "demo" / "work").glob("*/exports/report.md"))

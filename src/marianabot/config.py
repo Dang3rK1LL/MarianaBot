@@ -16,7 +16,7 @@ class BrainConfig(StrictModel):
     model: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9._-]+$")
     agents: int = Field(default=3, ge=2, le=12)
     concurrency: int = Field(default=1, ge=1, le=4)
-    effort: Literal["low", "medium", "high", "xhigh", "max"] = "high"
+    effort: Literal["auto", "low", "medium", "high", "xhigh", "max"] = "high"
 
 
 class SubscriptionConfig(StrictModel):

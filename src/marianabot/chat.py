@@ -26,6 +26,7 @@ from marianabot.reports import export_run
 from marianabot.store import Store
 from marianabot.usage_ui import UsageStrip
 from marianabot.worker import WorkerManager, atomic_json
+from marianabot.workspaces_ui import WorkFolderScreen
 
 COMMANDS = {
     "/help": "Show commands and keyboard shortcuts",
@@ -503,11 +504,20 @@ class MarianaChat(App):
                 raise ValueError(
                     "Subscription setup is incomplete. Disable extra usage and automatic credit purchases in both accounts, then set subscription.overage_disabled=true in mariana.toml. /demo needs no account setup."
                 )
-        run_id = self.store.create_run(problem, config, demo=self.demo)
+        folder = None
+        if not self.demo:
+            folder = await self.push_screen_wait(WorkFolderScreen())
+            if folder is None:
+                raise ValueError("Research was not started. Your problem remains in the draft.")
+            if self.manager.active():
+                raise ValueError("Another session started while choosing a folder. Pause it first.")
+        run_id = self.store.create_run(problem, config, demo=self.demo, work_folder=folder)
         await self.open_run(run_id)
         await self.note(
             "Research started",
-            "MB is preparing your brief. Replies will appear here as each stage finishes. You can keep writing; use **/steer** to change direction or **/pause** to take a break.",
+            "MB is preparing your brief. Replies will appear here as each stage finishes. You can keep writing; use **/steer** to change direction or **/pause** to take a break.\n\n"
+            + "Research files: "
+            + self.store.run(run_id)["work_dir"],
         )
         try:
             await self.manager.start(run_id)
@@ -654,11 +664,8 @@ class MarianaChat(App):
                 await self.note(name[1:].title(), content)
             elif name == "/export":
                 # A distinct destination avoids racing the worker's automatic exports.
-                target = (
-                    self.store.directory
-                    / "exports"
-                    / self.run_id
-                    / ("snapshot-" + uuid.uuid4().hex[:8])
+                target = self.store.export_directory(self.run_id) / (
+                    "snapshot-" + uuid.uuid4().hex[:8]
                 )
                 report = export_run(self.store, self.run_id, target)
                 await self.note(
@@ -864,7 +871,9 @@ class MarianaChat(App):
                     self.notify(str(exc), title="Could not save preferences", severity="error")
             self.action_compose()
 
-        self.push_screen(ModelsScreen(config, current), chosen)
+        self.push_screen(
+            ModelsScreen(config, current, cwd=self.store.directory / "client-workspace"), chosen
+        )
 
     def action_compose(self):
         self.chat_screen.query_one(Composer).focus()

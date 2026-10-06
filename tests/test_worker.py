@@ -56,7 +56,7 @@ async def test_detached_research_reconnect_and_post_completion_chat(store, confi
     await until(lambda: second.active() is None)
     assert len(store.rounds(run_id)) == 2
     assert {m["role"] for m in store.messages(run_id)} == {"you", "MB", "RB", "JB"}
-    assert (store.directory / "exports" / run_id / "report.md").is_file()
+    assert (store.export_directory(run_id) / "report.md").is_file()
     store.enqueue(run_id, "ask", "Explain the remaining assumptions")
     assert await second.start(run_id, messages_only=True)
     await until(lambda: second.active() is None)

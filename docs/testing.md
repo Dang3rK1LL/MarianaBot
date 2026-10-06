@@ -22,8 +22,10 @@ Coverage includes research and review rounds, steering, cancellation, checkpoint
 recovery, worker locking, quota waits, streamed usage accounting, protected memory,
 compaction, model preferences, terminal interaction, exports and database backups.
 Client protocol tests use fixture subprocesses; they cannot establish provider
-behavior. Discord tests cover access control, command handling and durable
-delivery. Updater tests cover activation, concurrent processes, failed installs,
+behavior. Model-menu tests cover provider lists, changing effort options, unavailable
+models, retry and cancellation. Discord tests cover access control, command handling,
+ordered stage updates, token snapshots, message limits and durable delivery.
+Updater tests cover activation, concurrent processes, failed installs,
 local edits and private-file preservation.
 
 ## Additional development tools
@@ -31,6 +33,7 @@ local edits and private-file preservation.
 | Tool | Purpose | Requirements |
 |---|---|---|
 | [`scripts/capture_chat.py`](../scripts/capture_chat.py) | Capture the real terminal UI using synthetic research and usage | Base app; optional `resvg-py` for PNG output |
+| [`scripts/preview_discord.py`](../scripts/preview_discord.py) | Preview notification cards with synthetic data as HTML and SVG | Base app; no bot connection or model calls |
 | [`scripts/check_updater.py`](../scripts/check_updater.py) | Build, validate and launch an update in a disposable checkout | Git and network access for Python packages |
 | [`scripts/check_linux_service.py`](../scripts/check_linux_service.py) | Check service interruption, checkpoint recovery and preservation of a deliberate pause | Linux, systemd user services and tmux |
 

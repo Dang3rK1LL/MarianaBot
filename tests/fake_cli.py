@@ -34,11 +34,55 @@ if "app-server" in args:
             emit(
                 {
                     "id": event["id"],
-                    "result": {"data": [{"model": "gpt-6-astra"}], "nextCursor": None},
+                    "result": {
+                        "data": [
+                            {
+                                "model": "gpt-6-astra",
+                                "displayName": "GPT-6 Astra",
+                                "defaultReasoningEffort": "high",
+                                "supportedReasoningEfforts": [
+                                    {"reasoningEffort": "medium"},
+                                    {"reasoningEffort": "high"},
+                                ],
+                            }
+                        ],
+                        "nextCursor": None,
+                    },
                 }
             )
 elif "auth" in args:
     emit({"loggedIn": True, "authMethod": "claude.ai", "subscriptionType": "pro"})
+elif "--input-format" in args:
+    assert "--model" not in args and "--effort" not in args
+    for line in sys.stdin:
+        event = json.loads(line)
+        assert event["type"] == "control_request"  # Discovery must never submit inference.
+        assert event["request"]["subtype"] == "initialize"
+        emit(
+            {
+                "type": "control_response",
+                "response": {
+                    "request_id": event["request_id"],
+                    "subtype": "success",
+                    "response": {
+                        "models": [
+                            {
+                                "value": "opus",
+                                "resolvedModel": "claude-opus-5-5",
+                                "displayName": "Opus",
+                                "supportsEffort": True,
+                                "supportedEffortLevels": ["low", "medium", "high", "xhigh", "max"],
+                            },
+                            {
+                                "value": "haiku",
+                                "resolvedModel": "claude-haiku-4-5-20251001",
+                                "displayName": "Haiku",
+                            },
+                        ]
+                    },
+                },
+            }
+        )
 else:
     assert not os.getenv("OPENAI_API_KEY")
     assert not os.getenv("ANTHROPIC_API_KEY")

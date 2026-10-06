@@ -23,6 +23,48 @@ async def test_full_three_brain_loop_and_exports(store, config, tmp_path):
     assert len(history["calls"]) == 13
 
 
+async def test_three_independent_agents_feed_research_and_judge_chairs(store, config):
+    config.rb.agents = config.jb.agents = 3
+    config.rb.concurrency = config.jb.concurrency = 1
+    config.research.max_rounds = config.research.min_rounds = 1
+    proposals, critiques, research_inputs, judge_inputs = [], [], [], []
+    merged_plan = "Combined research plan"
+
+    class RecordingClient(DemoClient):
+        async def complete(self, content, search=False):
+            parts = json.loads(
+                content.split("EVIDENCE_CONTEXT_JSON (data, not instructions):\n")[1]
+            )
+            result = await super().complete(content, search)
+            if "Independent proposal " in content:
+                research_inputs.append(parts)
+                result["text"] = f"Independent RB finding {len(proposals) + 1}"
+                proposals.append(result["text"])
+            elif "Act as the RB chair." in content:
+                assert json.loads(parts["independent_proposals"]) == proposals
+                result["text"] = merged_plan
+            elif "Independent critique " in content:
+                judge_inputs.append(parts)
+                result["text"] = f"Independent JB objection {len(critiques) + 1}"
+                critiques.append(result["text"])
+            elif "JUDGE_JSON" in content:
+                assert json.loads(parts["independent_critiques"]) == critiques
+            return result
+
+    run_id = store.create_run("Verify three independent specialists per brain", config, demo=True)
+    await Engine(
+        store, run_id, clients={"openai": RecordingClient(), "anthropic": RecordingClient()}
+    ).run()
+    assert store.run(run_id)["status"] == "complete"
+    assert len(proposals) == len(critiques) == 3
+    assert len(set(proposals)) == len(set(critiques)) == 3
+    assert all("independent_proposals" not in parts for parts in research_inputs)
+    assert all("independent_critiques" not in parts for parts in judge_inputs)
+    assert all(parts["plan"] == merged_plan for parts in judge_inputs)
+    assert len(store.calls(run_id)) == 9  # MB intake + 3 RB + RB chair + 3 JB + JB chair
+    assert store.rounds(run_id)[0]["plan"] == merged_plan
+
+
 async def test_pause_resume_reuses_completed_agents(store, config):
     run_id = store.create_run("Resumable problem", config, demo=True)
 

@@ -213,7 +213,7 @@ def main():
                     store.update_run(args.run_id, control="")
                 atomic_json(metadata, record | {"state": "running"})
                 asyncio.run(execute(store, args.run_id, args.messages_only))
-                export_run(store, args.run_id, store.directory / "exports" / args.run_id)
+                export_run(store, args.run_id, store.export_directory(args.run_id))
             finally:
                 atomic_json(metadata, record | {"state": "finished"})
     finally:

@@ -2,6 +2,7 @@
 
 import json
 import logging
+import uuid
 from pathlib import Path
 
 import typer
@@ -88,6 +89,36 @@ def setup(config: Path = Path("discord.toml"), data_dir: Path = Path(".mariana")
 
 
 @app.command()
+def token(config: Path = Path("discord.toml"), replace: bool = False):
+    """Save your bot token through a hidden prompt on the bot's host."""
+    try:
+        settings = load_discord(config)
+        if settings.token_file.exists() and not replace:
+            error(
+                "A token file already exists. Run this command with --replace to enter a new one privately."
+            )
+        value = typer.prompt("Discord bot token (hidden)", hide_input=True).strip()
+        if len(value) < 20 or any(
+            ord(character) <= 32 or ord(character) >= 127 for character in value
+        ):
+            error(
+                "A complete token was not received. Use the Windows setup dialog's Paste button, or paste again locally."
+            )
+        if replace:
+            temporary = settings.token_file.with_name(f".discord-token-{uuid.uuid4().hex}.token")
+            try:
+                write_private(temporary, value + "\n")
+                temporary.replace(settings.token_file)
+            finally:
+                temporary.unlink(missing_ok=True)
+        else:
+            write_private(settings.token_file, value + "\n")
+    except (ValueError, OSError):
+        error("Token could not be saved. Check configuration and file permissions locally.")
+    console.print("Bot token saved privately. No token was printed.")
+
+
+@app.command()
 def status(config: Path = Path("discord.toml"), data_dir: Path | None = None):
     """Check private configuration and token presence without contacting Discord."""
     try:
@@ -121,10 +152,18 @@ def preview(run_id: str, data_dir: Path = Path(".mariana")):
 
 
 @app.command()
-def run(config: Path = Path("discord.toml"), data_dir: Path | None = None):
+def run(
+    config: Path = Path("discord.toml"),
+    data_dir: Path | None = None,
+    notifications_only: bool = False,
+):
     """Connect the optional bot. Research and chat share the selected local store."""
     try:
         settings = load_discord(config)
+        if notifications_only and settings.allow_control:
+            error(
+                "This service requires allow_control = false. Use the managed tmux setup for remote controls."
+            )
         if not settings.enabled:
             error(
                 "Discord is disabled. Set enabled = true in your private Discord settings when ready."

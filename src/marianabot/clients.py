@@ -187,9 +187,12 @@ class CodexAccount:
                 limits = await rpc("account/rateLimits/read")
                 result = {"auth": "chatgpt", "plan": account_data.get("planType"), "limits": limits}
                 if include_models:
-                    models, cursor = [], None
+                    models, details, cursor = [], [], None
                     for _ in range(20):
-                        page = await rpc("model/list", {"cursor": cursor, "limit": 100})
+                        page = await rpc(
+                            "model/list", {"cursor": cursor, "limit": 100, "includeHidden": False}
+                        )
+                        details.extend(page.get("data", []))
                         models.extend(
                             item.get("model") or item.get("id") for item in page.get("data", [])
                         )
@@ -197,6 +200,7 @@ class CodexAccount:
                         if not cursor:
                             break
                     result["models"] = models
+                    result["model_details"] = details
                 return result
         except TimeoutError:
             raise ClientError(
@@ -282,7 +286,7 @@ class NativeClient:
         self.provider, self.config, self.cwd, self.limits = provider, config, cwd, limits
         cwd.mkdir(parents=True, exist_ok=True)
 
-    def args(self, search: bool) -> list[str]:
+    def args(self, search: bool, *, preferences: bool = True) -> list[str]:
         if self.provider == "openai":
             brain = self.config.rb
             args = executable(self.config.subscription.codex_command) + [
@@ -294,8 +298,6 @@ class NativeClient:
                 'model_provider="openai"',
                 "-c",
                 'approval_policy="never"',
-                "-c",
-                f'model_reasoning_effort="{brain.effort}"',
                 "-c",
                 f'web_search="{"live" if search else "disabled"}"',
                 "-c",
@@ -309,6 +311,8 @@ class NativeClient:
                 "--model",
                 brain.model,
             ]
+            if brain.effort != "auto":
+                args += ["-c", f'model_reasoning_effort="{brain.effort}"']
             for feature in (
                 "shell_tool",
                 "unified_exec",
@@ -325,16 +329,12 @@ class NativeClient:
                 args += ["--disable", feature]
             return args + ["-"]
         brain = self.config.jb
-        return executable(self.config.subscription.claude_command) + [
+        args = executable(self.config.subscription.claude_command) + [
             "-p",
             "--output-format",
             "stream-json",
             "--verbose",
             "--include-partial-messages",
-            "--model",
-            brain.model,
-            "--effort",
-            brain.effort,
             "--safe-mode",
             "--restricted",
             "--strict-mcp-config",
@@ -352,6 +352,11 @@ class NativeClient:
             "--no-chrome",
             "--disable-slash-commands",
         ]
+        if preferences:
+            args += ["--model", brain.model]
+            if brain.effort != "auto":
+                args += ["--effort", brain.effort]
+        return args
 
     async def complete(self, prompt: str, search: bool = False, *, on_usage=None) -> dict:
         process = await launch(self.args(search), self.cwd)
@@ -452,6 +457,43 @@ class NativeClient:
         finally:
             await terminate(process)
             await stderr_task
+
+
+async def claude_models(config: Config, cwd: Path) -> list[dict]:
+    """Read the subscription CLI's picker metadata without sending a user prompt."""
+    await claude_account(config, cwd)
+    args = NativeClient("anthropic", config, cwd, None).args(False, preferences=False)
+    process = await launch(args + ["--input-format", "stream-json"], cwd)
+    stderr_task = asyncio.create_task(drain(process.stderr))
+    try:
+        async with asyncio.timeout(25):
+            request = {
+                "type": "control_request",
+                "request_id": "mariana-models",
+                "request": {"subtype": "initialize", "hooks": {}},
+            }
+            process.stdin.write((json.dumps(request) + "\n").encode())
+            await process.stdin.drain()
+            while line := await process.stdout.readline():
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                response = event.get("response", {})
+                if (
+                    event.get("type") == "control_response"
+                    and response.get("request_id") == request["request_id"]
+                ):
+                    models = response.get("response", {}).get("models")
+                    if response.get("subtype") != "success" or not isinstance(models, list):
+                        break
+                    return models
+            raise ClientError("Claude model list unavailable; check login and CLI version")
+    except TimeoutError:
+        raise ClientError("Claude model list timed out; no model request was sent") from None
+    finally:
+        await terminate(process)
+        await stderr_task
 
 
 class DemoClient:

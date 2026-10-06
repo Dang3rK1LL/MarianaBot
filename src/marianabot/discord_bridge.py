@@ -8,6 +8,15 @@ import uuid
 
 from marianabot.config import Config
 from marianabot.discord_config import DiscordConfig
+from marianabot.discord_messages import (
+    card_text,
+    message_card,
+    recap_card,
+    round_start_card,
+    stage_card,
+    state_card,
+    wait_card,
+)
 from marianabot.store import Store
 from marianabot.usage_ui import duration, quota_line
 from marianabot.worker import WorkerManager
@@ -21,11 +30,6 @@ def excerpt(value: str, limit: int) -> str:
         if len(value) <= limit
         else value[: limit - 28].rstrip() + " … (full text in MarianaBot)"
     )
-
-
-def section(plan: str, heading: str, limit: int) -> str:
-    match = re.search(rf"(?im)^##\s+{re.escape(heading)}\s*$\n(.*?)(?=^##\s|\Z)", plan, re.S)
-    return excerpt(match[1], limit) if match else ""
 
 
 def status_text(
@@ -71,20 +75,19 @@ def status_text(
     return excerpt("\n".join(lines), 1800)
 
 
-def round_text(store: Store, run_id: str, row: dict) -> str:
-    review = json.loads(row["review"]) if isinstance(row["review"], str) else row["review"]
-    plan = row["plan"]
-    summary = section(plan, "Round summary", 230)
-    changes = section(plan, "Changes this round", 170) or "No separate change summary recorded."
-    direction = excerpt(review.get("next_prompt", "Not recorded."), 230)
-    heading = "Summary" if summary else "Plan excerpt"
-    summary = summary or excerpt(plan, 230)
-    blockers = "; ".join(review.get("blocking_issues", [])) or "None reported."
-    return excerpt(
-        f"Round {row['number']} complete · {review.get('score', '?')}/100 · {review.get('verdict', 'unknown')}\n"
-        f"{heading}: {summary}\nChanges: {changes}\nNext: {direction}\n"
-        f"Open issues: {excerpt(blockers, 130)}\n\n{status_text(store, run_id, include_models=False)}",
-        1950,
+def usage_snapshot(store: Store, run_id: str) -> dict:
+    return dict(
+        usage=store.usage_totals(run_id), elapsed=time.time() - store.run(run_id)["created"]
+    )
+
+
+def round_text(store: Store, run_id: str, row: dict, *, snapshot: dict | None = None) -> str:
+    return card_text(
+        recap_card(
+            store.run(run_id),
+            row,
+            snapshot if snapshot is not None else usage_snapshot(store, run_id),
+        )
     )
 
 
@@ -106,6 +109,16 @@ class DiscordBridge:
                 scope TEXT NOT NULL, request_id TEXT NOT NULL, response TEXT NOT NULL,
                 PRIMARY KEY(scope,request_id));
         """)
+        if "last_event" not in {
+            row[1] for row in store.db.execute("PRAGMA table_info(discord_watch)")
+        }:
+            with store.db:
+                store.db.execute(
+                    "ALTER TABLE discord_watch ADD COLUMN last_event INTEGER NOT NULL DEFAULT 0"
+                )
+        if "embed" not in {row[1] for row in store.db.execute("PRAGMA table_info(discord_outbox)")}:
+            with store.db:
+                store.db.execute("ALTER TABLE discord_outbox ADD COLUMN embed TEXT")
 
     def watch(self):
         row = self.store.db.execute(
@@ -187,16 +200,27 @@ class DiscordBridge:
             cursor = self.store.db.execute(
                 "SELECT COALESCE(MAX(id),0) FROM chat_messages WHERE run_id=?", (run_id,)
             ).fetchone()[0]
+            event_cursor = self.store.db.execute(
+                "SELECT COALESCE(MAX(id),0) FROM events WHERE run_id=?", (run_id,)
+            ).fetchone()[0]
             with self.store.db:
                 self.store.db.execute(
                     "DELETE FROM discord_outbox WHERE scope=? AND delivered=0", (self.scope,)
                 )
                 self.store.db.execute(
-                    "INSERT OR REPLACE INTO discord_watch VALUES(?,?,?,?,?,?)",
-                    (self.scope, run_id, uuid.uuid4().hex, run["round"], cursor, self._state(run)),
+                    "INSERT OR REPLACE INTO discord_watch(scope,run_id,epoch,last_round,last_message,last_state,last_event) VALUES(?,?,?,?,?,?,?)",
+                    (
+                        self.scope,
+                        run_id,
+                        uuid.uuid4().hex,
+                        run["round"],
+                        cursor,
+                        self._state(run),
+                        event_cursor,
+                    ),
                 )
             return (
-                "Watching future rounds, MB replies and state changes in this channel.\n\n"
+                "Watching research stages, recaps, MB replies and state changes in this channel.\n\n"
                 + status_text(self.store, run_id)
             )
         watched = self.watch()
@@ -238,10 +262,22 @@ class DiscordBridge:
     def _state(run):
         return json.dumps([run["status"], run["reason"]])
 
-    def _queue(self, key: str, body: str):
+    def _queue(self, key: str, embed: dict):
         self.store.db.execute(
-            "INSERT OR IGNORE INTO discord_outbox(scope,event_key,body) VALUES(?,?,?)",
-            (self.scope, key, body),
+            "INSERT OR IGNORE INTO discord_outbox(scope,event_key,body,embed) VALUES(?,?,?,?)",
+            (self.scope, key, card_text(embed), json.dumps(embed)),
+        )
+
+    def _recap(self, run: dict, row: dict, snapshot: dict | None = None) -> dict:
+        previous = self.store.db.execute(
+            "SELECT review FROM rounds WHERE run_id=? AND number<? ORDER BY number DESC LIMIT 1",
+            (run["id"], row["number"]),
+        ).fetchone()
+        return recap_card(
+            run,
+            row,
+            snapshot if snapshot is not None else usage_snapshot(self.store, run["id"]),
+            json.loads(previous["review"]) if previous else None,
         )
 
     def collect(self):
@@ -252,40 +288,101 @@ class DiscordBridge:
         run_id, epoch = watched["run_id"], watched["epoch"]
         run = self.store.run(run_id)
         with self.store.transaction():
+            events = self.store.db.execute(
+                "SELECT id,kind,payload,created FROM events WHERE run_id=? AND id>? "
+                "AND kind IN ('round_started','round_complete','research_stage','research_wait') ORDER BY id LIMIT 100",
+                (run_id, watched["last_event"]),
+            ).fetchall()
+            messages = self.store.db.execute(
+                "SELECT * FROM chat_messages WHERE run_id=? AND id>? AND role='MB' ORDER BY id LIMIT 100",
+                (run_id, watched["last_message"]),
+            ).fetchall()
+            sources = sorted(
+                [(row["created"], "event", row["id"], dict(row)) for row in events]
+                + [(row["created"], "message", row["id"], dict(row)) for row in messages]
+            )[:100]
+            for _, source, _, event in sources:
+                if source == "message":
+                    self._queue(f"{epoch}:message:{event['id']}", message_card(run, event))
+                    watched["last_message"] = event["id"]
+                    continue
+                payload = json.loads(event["payload"])
+                if event["kind"] == "round_started":
+                    self._queue(
+                        f"{epoch}:start:{payload['number']}:{payload['revision']}",
+                        round_start_card(run, payload),
+                    )
+                elif event["kind"] == "research_stage":
+                    if payload.get("stage") in {"intake", "synthesis", "critique", "verdict"}:
+                        self._queue(
+                            f"{epoch}:stage:{payload['number']}:{payload['revision']}:{payload['stage']}",
+                            stage_card(run, payload),
+                        )
+                elif event["kind"] == "research_wait":
+                    self._queue(f"{epoch}:wait:{event['id']}", wait_card(run, payload))
+                else:
+                    row = self.store.db.execute(
+                        "SELECT * FROM rounds WHERE run_id=? AND number=?",
+                        (run_id, payload["number"]),
+                    ).fetchone()
+                    if row:
+                        self._queue(
+                            f"{epoch}:round:{row['number']}",
+                            self._recap(run, dict(row), payload),
+                        )
+                        watched["last_round"] = max(watched["last_round"], row["number"])
+                watched["last_event"] = event["id"]
+            if len(sources) == 100:
+                self.store.db.execute(
+                    "UPDATE discord_watch SET last_event=?,last_round=?,last_message=? WHERE scope=?",
+                    (
+                        watched["last_event"],
+                        watched["last_round"],
+                        watched["last_message"],
+                        self.scope,
+                    ),
+                )
+                return
             for row in self.store.db.execute(
                 "SELECT * FROM rounds WHERE run_id=? AND number>? ORDER BY number LIMIT 10",
                 (run_id, watched["last_round"]),
             ).fetchall():
-                self._queue(
-                    f"{epoch}:round:{row['number']}", round_text(self.store, run_id, dict(row))
-                )
+                self._queue(f"{epoch}:round:{row['number']}", self._recap(run, dict(row)))
                 watched["last_round"] = row["number"]
-            for row in self.store.db.execute(
-                "SELECT id,title,text FROM chat_messages WHERE run_id=? AND id>? AND role='MB' ORDER BY id LIMIT 20",
-                (run_id, watched["last_message"]),
-            ).fetchall():
-                self._queue(
-                    f"{epoch}:message:{row['id']}",
-                    f"MB · {excerpt(row['title'], 80)} · {run_id}\n{excerpt(row['text'], 1750)}",
-                )
-                watched["last_message"] = row["id"]
             state = self._state(run)
             if state != watched["last_state"]:
-                self._queue(f"{epoch}:state:{uuid.uuid4().hex}", status_text(self.store, run_id))
+                history = self.store.rounds(run_id)
+                self._queue(
+                    f"{epoch}:state:{uuid.uuid4().hex}",
+                    state_card(
+                        run,
+                        usage_snapshot(self.store, run_id),
+                        history[-1]["review"] if history else None,
+                    ),
+                )
             self.store.db.execute(
-                "UPDATE discord_watch SET last_round=?,last_message=?,last_state=? WHERE scope=?",
-                (watched["last_round"], watched["last_message"], state, self.scope),
+                "UPDATE discord_watch SET last_round=?,last_message=?,last_state=?,last_event=? WHERE scope=?",
+                (
+                    watched["last_round"],
+                    watched["last_message"],
+                    state,
+                    watched["last_event"],
+                    self.scope,
+                ),
             )
 
     async def deliver(self, send):
         async with self.guard:
             self.collect()
             rows = self.store.db.execute(
-                "SELECT id,body FROM discord_outbox WHERE scope=? AND delivered=0 ORDER BY id LIMIT 5",
+                "SELECT id,body,embed FROM discord_outbox WHERE scope=? AND delivered=0 ORDER BY id LIMIT 5",
                 (self.scope,),
             ).fetchall()
             for row in rows:
-                await send(row["body"])
+                if row["embed"]:
+                    await send(row["body"], embed=json.loads(row["embed"]))
+                else:
+                    await send(row["body"])
                 with self.store.db:
                     self.store.db.execute(
                         "UPDATE discord_outbox SET delivered=1 WHERE id=?", (row["id"],)

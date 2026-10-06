@@ -1,0 +1,16 @@
+[Unit]
+Description=Update the official Codex CLI while MarianaBot research is idle
+After=network-online.target
+Wants=network-online.target
+ConditionFileIsExecutable=%h/.local/bin/codex
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/MarianaBot
+Environment=PATH=%h/.local/bin:%h/MarianaBot/.venv/bin:/usr/local/bin:/usr/bin:/bin
+Environment=CODEX_NON_INTERACTIVE=1
+Environment=PYTHONUNBUFFERED=1
+UMask=0077
+ExecStart=%h/MarianaBot/.venv/bin/python %h/MarianaBot/deploy/codex-update-linux.py
+TimeoutStartSec=240
+Nice=10

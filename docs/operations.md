@@ -17,10 +17,16 @@ clarifications with steer.
 
 ~~~text
 mariana new --problem-file examples/problem.md
+mariana new --problem-file examples/problem.md --work-folder ~/MarianaBot-work
 mariana run RUN_ID
 ~~~
 
 Creating a run stores the problem and configuration without inference.
+Without `--work-folder`, `new` asks for a work folder before asking for the
+problem. It creates a unique `research-RUN_ID` child directory. Its `exports/`
+contains the report, history, conversation, memory and citations; its
+`client-workspace/` is isolated from other research runs. Demo runs use separate
+folders within their demo data directory. Existing runs keep their saved paths.
 Running it starts MB, then the research/review teams. The default limit is 24
 rounds or 72 elapsed hours, including quota waits.
 

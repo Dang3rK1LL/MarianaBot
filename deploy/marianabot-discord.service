@@ -1,0 +1,23 @@
+[Unit]
+Description=MarianaBot Discord round notifications
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=%h/MarianaBot/discord.toml
+ConditionPathExists=%h/MarianaBot/discord-token.txt
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=exec
+WorkingDirectory=%h/MarianaBot
+Environment=PATH=%h/.local/bin:%h/MarianaBot/.venv/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONUTF8=1
+UMask=0077
+ExecStart=%h/MarianaBot/.venv/bin/python -m marianabot --no-update discord run --notifications-only --config %h/MarianaBot/discord.toml --data-dir %h/.local/share/marianabot
+Restart=on-failure
+RestartSec=30
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target

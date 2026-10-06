@@ -56,8 +56,11 @@ terminals that support it. F7 selects the entire draft; Ctrl+Z undoes edits.
 
 Click **Models** or type `/models` to change either provider's model and effort.
 The existing defaults are Astra/high and Opus 5.5/medium; **Use defaults**, then **Save**
-restores those choices. Enter a full model ID for a future release supported by
-your account. Availability and effort support are checked by the provider; MarianaBot does not request a fallback model. Saved choices affect new runs, while an
+restores those choices. Choose from the live model lists reported by your signed-in
+clients. Effort options change with the selected model; models without adjustable
+effort show a disabled **Default** field. If a list cannot load, check that client's
+login and use **Retry**. New models appear when the client reports them. MarianaBot
+does not request a fallback model. Saved choices affect new runs, while an
 existing conversation retains its original settings. MB and compaction use the
 research model. The screen shows the current run's choices when one is open.
 

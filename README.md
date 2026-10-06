@@ -73,6 +73,12 @@ Paste your problem into the editor. **Enter sends; Alt+Enter or Ctrl+J adds a
 newline.** Long pastes remain editable. Include constraints, what you already
 know, and what decision the research should help you make.
 
+Before starting each live research run, choose a work folder. MarianaBot creates
+a separate `research-RUN_ID` subfolder there for the problem, client workspace
+and exported results. The default parent is `~/MarianaBot-work` on the host
+running the research. Completed rounds refresh the results automatically.
+The shared SQLite history still lets chat and Discord find all your sessions.
+
 | Component | What it does |
 |---|---|
 | Master brain (MB) | Prepares the brief, answers you and applies steering; shares the research model and allowance |
@@ -97,6 +103,11 @@ Type normally to ask MB a question. Type `/` to see commands:
 | `/memory` / `/pin exact wording` | Inspects memory or protects an instruction from summarization |
 | `/export` | Writes the plan, transcript, history, memory and cited links |
 | `/quit` | Closes chat while background research continues |
+
+`/models` lists models reported by your signed-in Codex and Claude clients.
+The effort menu follows the selected model; models without adjustable effort use
+their default. Loading the lists does not generate model responses. Preferences
+apply to new research, while existing runs keep their saved settings.
 
 The app starts its worker and client processes itself. Reopening chat reconnects
 to saved work. One research worker runs per data directory. On a laptop, keep it
@@ -143,7 +154,8 @@ SSH keys and client credentials private. Read the [security notes](SECURITY.md).
 
 ## Optional Discord connection
 
-Follow rounds and talk to MB from your own private Discord channel. The optional
+Follow research stages, findings, changes and usage in clean cards from your own
+private Discord channel. The optional
 integration supports `/mariana ask`, `steer`, `pause`, `resume` and status updates.
 You create your own bot, choose allowed users, and explicitly select which run to
 share. It is disabled by default, with private credentials kept outside Git.

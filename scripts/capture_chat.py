@@ -5,10 +5,12 @@ import os
 import tempfile
 import time
 from pathlib import Path
+from unittest.mock import patch
 
 from marianabot.chat import Composer, MarianaChat
 from marianabot.config import Config
 from marianabot.engine import Engine
+from marianabot.model_catalog import ModelOption
 from marianabot.store import Store
 from marianabot.usage import normalize_usage
 
@@ -48,12 +50,34 @@ async def main():
             app.action_latest()
             await pilot.pause()
             app.save_screenshot("conversation.svg", path=str(output))
-            app.action_models()
-            await pilot.pause(0.2)
-            app.save_screenshot("models.svg", path=str(output))
-            await pilot.resize_terminal(80, 24)
-            await pilot.pause(0.2)
-            app.save_screenshot("models-narrow.svg", path=str(output))
+
+            async def model_fixture(provider, config, cwd):
+                if provider == "rb":
+                    return [
+                        ModelOption(
+                            "gpt-6-astra", "GPT-6 Astra", ("low", "medium", "high", "xhigh", "max")
+                        ),
+                        ModelOption(
+                            "gpt-6.1-sol", "GPT-6.1 Sol", ("low", "medium", "high", "xhigh", "max")
+                        ),
+                    ]
+                return [
+                    ModelOption(
+                        "claude-opus-5-5", "Opus 5.5", ("low", "medium", "high", "xhigh", "max")
+                    ),
+                    ModelOption("claude-haiku-4-5-20251001", "Haiku 4.5", (), "auto"),
+                ]
+
+            with patch("marianabot.models_ui.load_models", model_fixture):
+                app.action_models()
+                await pilot.pause(0.2)
+                app.save_screenshot("models.svg", path=str(output))
+                await pilot.resize_terminal(80, 24)
+                await pilot.pause(0.2)
+                app.save_screenshot("models-narrow.svg", path=str(output))
+                await pilot.click("#rb-model")
+                await pilot.pause()
+                app.save_screenshot("models-dropdown.svg", path=str(output))
         # Synthetic account reports exercise the working layout without contacting providers.
         fixture = state / "usage-fixture"
         store = Store(fixture)

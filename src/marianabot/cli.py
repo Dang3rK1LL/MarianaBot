@@ -21,6 +21,7 @@ from marianabot.engine import Engine
 from marianabot.reports import export_run
 from marianabot.store import Store
 from marianabot.ui import dashboard
+from marianabot.workspaces import default_work_folder, resolve_work_folder
 
 app = typer.Typer(
     help="Persistent research with independent critique and a conversation you can steer.",
@@ -154,21 +155,32 @@ def new(
     problem_file: Annotated[Path | None, typer.Option("--problem-file")] = None,
     config: Path = Path("mariana.toml"),
     data_dir: DataDir = DEFAULT_DATA,
+    work_folder: Annotated[Path | None, typer.Option("--work-folder")] = None,
 ):
     """Save a problem. MB prepares the brief when you run it."""
     try:
         if problem and problem_file:
             raise ValueError("Use a problem argument or --problem-file")
+        settings = config_at(config)
+        folder = resolve_work_folder(
+            work_folder
+            if work_folder is not None
+            else typer.prompt(
+                "Work folder (a new research subfolder will be created)",
+                default=str(default_work_folder()),
+            )
+        )
         text = problem_file.read_text(encoding="utf-8") if problem_file else problem
         if not text:
             text = typer.prompt("What business problem should MarianaBot investigate?")
-        settings = config_at(config)
         store = Store(data_dir)
         try:
-            run_id = store.create_run(text, settings)
+            run_id = store.create_run(text, settings, work_folder=folder)
+            directory = store.run(run_id)["work_dir"]
         finally:
             store.close()
         console.print(Text(run_id, style="bold cyan"))
+        console.print(Text(f"Research files: {directory}"))
         console.print(f"Start with: mariana run {run_id} --data-dir {data_dir}")
     except (ValueError, OSError) as exc:
         fail(exc)
@@ -222,7 +234,7 @@ def run_worker(
             if resume_run:
                 store.update_run(run_id, control="")
             asyncio.run(execute(store, run_id, plain))
-            report = export_run(store, run_id, store.directory / "exports" / run_id)
+            report = export_run(store, run_id, store.export_directory(run_id))
             console.print(Text(f"Report: {report}", style="cyan"))
             if store.run(run_id)["status"] == "paused":
                 raise typer.Exit(3)
@@ -385,7 +397,7 @@ def export_command(run_id: str, output: Path | None = None, data_dir: DataDir = 
     """Export a Markdown report, citation index and complete JSON history."""
     store = Store(data_dir)
     try:
-        path = export_run(store, run_id, output or store.directory / "exports" / run_id)
+        path = export_run(store, run_id, output or store.export_directory(run_id))
         console.print(Text(str(path)))
     except (ValueError, OSError) as exc:
         fail(exc)

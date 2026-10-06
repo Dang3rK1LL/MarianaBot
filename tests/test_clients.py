@@ -4,7 +4,13 @@ from pathlib import Path
 import pytest
 
 from marianabot import clients
-from marianabot.clients import CodexAccount, NativeClient, claude_account, subscription_env
+from marianabot.clients import (
+    CodexAccount,
+    NativeClient,
+    claude_account,
+    claude_models,
+    subscription_env,
+)
 from marianabot.limits import SubscriptionLimits
 
 
@@ -21,7 +27,28 @@ async def test_account_protocol_without_inference(fake_clients, config, tmp_path
     account = await CodexAccount(config, tmp_path).snapshot(include_models=True)
     assert account["auth"] == "chatgpt"
     assert config.rb.model in account["models"]
+    assert account["model_details"][0]["supportedReasoningEfforts"]
     assert (await claude_account(config, tmp_path))["auth"] == "claude.ai"
+
+
+async def test_claude_catalog_uses_only_initialization_and_resolves_picker_models(
+    fake_clients, config, tmp_path
+):
+    config.jb.model = "unavailable-saved-model"
+    models = await claude_models(config, tmp_path)
+    assert models[0]["resolvedModel"] == "claude-opus-5-5"
+    assert "xhigh" in models[0]["supportedEffortLevels"]
+    assert models[1]["resolvedModel"] == "claude-haiku-4-5-20251001"
+
+
+@pytest.mark.parametrize("provider", ["openai", "anthropic"])
+def test_default_effort_does_not_pass_an_unsupported_level(
+    provider, fake_clients, config, tmp_path
+):
+    config.rb.effort = config.jb.effort = "auto"
+    args = NativeClient(provider, config, tmp_path, None).args(False)
+    assert "--effort" not in args
+    assert not any("model_reasoning_effort" in argument for argument in args)
 
 
 @pytest.mark.parametrize("provider", ["openai", "anthropic"])

@@ -12,6 +12,35 @@ from marianabot.discord_bridge import DiscordBridge, excerpt
 log = logging.getLogger(__name__)
 
 
+def render_embed(data: dict) -> discord.Embed:
+    """Escape saved output and enforce Discord's limits after escaping."""
+
+    def clean(value, limit):
+        return excerpt(discord.utils.escape_markdown(str(value)), limit)
+
+    title = clean(data.get("title", "MarianaBot"), 256)
+    description = clean(data.get("description", ""), 900)
+    footer = clean(data.get("footer", {}).get("text", ""), 250)
+    remaining = 5800 - len(title) - len(description) - len(footer)
+    embed = discord.Embed(title=title, description=description, color=data.get("color", 0x7AA2F7))
+    for field in data.get("fields", [])[:25]:
+        if remaining < 100:
+            break
+        name = clean(field["name"], 120)
+        value = clean(field["value"], min(1024, remaining - len(name)))
+        remaining -= len(name) + len(value)
+        embed.add_field(name=name, value=value, inline=bool(field.get("inline")))
+    embed.set_footer(text=footer)
+    return embed
+
+
+def fallback_text(embed: discord.Embed) -> str:
+    lines = [f"**{embed.title}**", embed.description or ""]
+    lines += [f"**{field.name}**\n{field.value}" for field in embed.fields]
+    lines.append(embed.footer.text or "")
+    return excerpt("\n\n".join(line for line in lines if line), 1950)
+
+
 class ResearchCommands(app_commands.Group):
     def __init__(self, bridge: DiscordBridge):
         super().__init__(
@@ -119,6 +148,7 @@ class MarianaDiscord(discord.Client):
         self.bridge = bridge
         self.tree = app_commands.CommandTree(self)
         self.destination = None
+        self.embed_enabled = True
         self.monitor_task = None
 
     async def setup_hook(self):
@@ -141,8 +171,15 @@ class MarianaDiscord(discord.Client):
             if not permissions.view_channel or not permissions.send_messages:
                 raise ValueError("Missing View Channel or Send Messages permission")
             self.destination = channel
+            self.embed_enabled = permissions.embed_links
+            if not self.embed_enabled:
+                log.warning(
+                    "Embed Links permission is missing; research updates will use formatted text."
+                )
             print(
-                "Discord connected. Use /mariana sessions, then /mariana watch to select research.",
+                "Discord connected. Research cards "
+                + ("enabled" if self.embed_enabled else "using text fallback")
+                + ". Use /mariana sessions, then /mariana watch to select research.",
                 flush=True,
             )
         except Exception as exc:
@@ -152,10 +189,27 @@ class MarianaDiscord(discord.Client):
             )
             await self.close()
 
-    async def send_update(self, body: str):
+    async def send_update(self, body: str, *, embed: dict | None = None):
         if self.destination is None:
             raise ValueError("Discord destination is not ready")
-        # Escape model Markdown and disable mentions/link previews. No attachments or files.
+        if embed is not None:
+            rendered = render_embed(embed)
+            if hasattr(self.destination, "permissions_for"):
+                self.embed_enabled = self.destination.permissions_for(
+                    self.destination.guild.me
+                ).embed_links
+            if self.embed_enabled:
+                await self.destination.send(
+                    embed=rendered, allowed_mentions=discord.AllowedMentions.none()
+                )
+                return
+            await self.destination.send(
+                fallback_text(rendered),
+                allowed_mentions=discord.AllowedMentions.none(),
+                suppress_embeds=True,
+            )
+            return
+        # Pending notifications from older versions still deliver as plain text.
         body = excerpt(discord.utils.escape_markdown(body), 1950)
         await self.destination.send(
             body, allowed_mentions=discord.AllowedMentions.none(), suppress_embeds=True
