@@ -8,6 +8,7 @@ import uuid
 import webbrowser
 from datetime import datetime
 from pathlib import Path
+from random import choice
 from urllib.parse import urlparse
 
 from rich.text import Text
@@ -22,6 +23,7 @@ from textual.widgets.option_list import Option
 
 from marianabot.clients import ClaudeAccount, ClientError, CodexAccount
 from marianabot.config import Config, load_config, save_model_preferences
+from marianabot.greetings import STARTUP_GREETINGS
 from marianabot.limits import SubscriptionLimits
 from marianabot.models_ui import ModelsScreen
 from marianabot.reports import export_run
@@ -410,7 +412,7 @@ class MarianaChat(App):
         self.chat_screen.query_one(Composer).placeholder = "Describe your business problem…"
         await self.chat_screen.query_one("#conversation").remove_children()
         await self.chat_screen.query_one("#conversation").mount(
-            Static("What are you working on?", id="welcome-title"),
+            Static(choice(STARTUP_GREETINGS), id="welcome-title", markup=False),
             Static(
                 "Describe the decision, business idea or problem.\n"
                 "Add your constraints and what a useful result would look like.\n\n"
