@@ -32,8 +32,11 @@ async def test_worker_survives_launcher_process_exit(store, config):
     manager = WorkerManager(store.directory)
     try:
         assert manager.active()  # The launcher has exited; research still owns its lock.
-        await until(lambda: manager.active() is None)
+        # Two rounds with 12 serial agents per team produce many SQLite commits.
+        # Allow slow Windows CI disks to finish after the parent-exit assertion.
+        await until(lambda: manager.active() is None, timeout=45)
         assert store.run(run_id)["status"] == "complete"
+        assert len(store.rounds(run_id)) == 2
     finally:
         if manager.active():
             store.update_run(run_id, control="pause")
