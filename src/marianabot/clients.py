@@ -22,6 +22,7 @@ class ClientError(Exception):
     def __init__(self, message: str, retryable: bool = False, limited: bool = False):
         super().__init__(message)
         self.retryable, self.limited = retryable, limited
+        self.diagnostics: dict = {}
 
 
 def subscription_env() -> dict[str, str]:
@@ -230,54 +231,118 @@ async def claude_account(config: Config, cwd: Path) -> dict:
 
 
 def error_from(text: str) -> ClientError:
-    lower = text.lower()
-    if any(
-        word in lower
-        for word in (
-            "billing_error",
-            "insufficient_quota",
-            "credit balance",
-            "payment required",
-            "spend cap",
+    # Classify the error fields, not unrelated usage/permission metadata or
+    # quoted research in a whole event. Keep only bounded, redacted diagnostics.
+    try:
+        event = json.loads(text)
+    except ValueError:
+        event = None
+    details = {}
+    if isinstance(event, dict):
+        for name in ("type", "subtype", "status", "status_code", "code", "request_id"):
+            if isinstance(event.get(name), (str, int)):
+                details[name] = diagnostic(str(event[name]))
+        error = event.get("error")
+        if isinstance(error, dict):
+            details["error"] = {
+                key: diagnostic(str(error[key]))
+                for key in ("type", "code", "status", "status_code", "message")
+                if isinstance(error.get(key), (str, int))
+            }
+        elif isinstance(error, str):
+            details["error"] = diagnostic(error)
+        messages = event.get("errors")
+        if isinstance(messages, list):
+            details["errors"] = [
+                diagnostic(item) for item in messages[:10] if isinstance(item, str)
+            ]
+        for name in ("message", "result"):
+            if isinstance(event.get(name), str):
+                details[name] = diagnostic(event[name])
+        lower = json.dumps(details).lower()
+    else:
+        details["message"] = diagnostic(text)
+        lower = text.lower()
+    status = re.search(r"\b(400|401|402|403|404|413|429|500|502|503|504|529)\b", lower)
+    status = int(status[1]) if status else None
+
+    def failure(message: str, *, retryable=False, limited=False) -> ClientError:
+        error = ClientError(message, retryable=retryable, limited=limited)
+        error.diagnostics = details
+        return error
+
+    if (
+        any(
+            word in lower
+            for word in (
+                "billing_error",
+                "insufficient_quota",
+                "credit balance",
+                "payment required",
+                "spend cap",
+            )
         )
+        or status == 402
     ):
-        return ClientError(
+        return failure(
             "Provider billing or credit limit reached; review account settings before resuming"
         )
-    if any(
-        word in lower
-        for word in (
-            "rate_limit",
-            "rate limit",
-            "usage limit",
-            "usage_limit",
-            "limit reached",
-            "hit your limit",
+    if (
+        any(
+            word in lower
+            for word in (
+                "rate_limit",
+                "rate limit",
+                "usage limit",
+                "usage_limit",
+                "limit reached",
+                "hit your limit",
+            )
         )
+        or status == 429
     ):
-        return ClientError("Subscription usage limit reached", limited=True)
+        return failure("Subscription usage limit reached", limited=True)
+    if any(word in lower for word in ("auth", "login", "unauthorized")) or status in (401, 403):
+        return failure("Client authentication or permission failed; check your subscription access")
+    if any(
+        word in lower for word in ("model_not_found", "model not found", "not supported")
+    ) or re.search(r"model[^\n]{0,100}not available", lower):
+        return failure(
+            "Requested model is unavailable for this account; no fallback model was selected"
+        )
+    if "error_max_turns" in lower:
+        return failure("Claude reached its turn limit before completing the response")
+    if "error_max_budget_usd" in lower:
+        return failure("Claude reached its configured spending limit; review client settings")
+    if "error_max_structured_output_retries" in lower:
+        return failure("Claude exhausted its structured-output retries")
+    if (
+        any(
+            word in lower
+            for word in ("prompt is too long", "prompt too long", "context_length_exceeded")
+        )
+        or status == 413
+    ):
+        return failure("Provider rejected an oversized request; original research is retained")
+    if "invalid_request_error" in lower or status == 400:
+        return failure("Provider rejected the request format; see saved client diagnostics")
     if any(
         word in lower
         for word in (
             "overloaded",
+            "api_error",
             "server_error",
             "server error",
             "timeout",
             "timed out",
             "connection",
+            "no response from api",
+            "temporarily unavailable",
+            "error_during_execution",
         )
-    ):
-        return ClientError("Provider temporarily unavailable", retryable=True)
-    if any(
-        word in lower
-        for word in ("model_not_found", "model not found", "not supported", "not available")
-    ):
-        return ClientError(
-            "Requested model is unavailable for this account; no fallback model was selected"
-        )
-    if any(word in lower for word in ("auth", "login", "unauthorized")):
-        return ClientError("Client authentication failed; sign in again with your subscription")
-    return ClientError(
+    ) or status in (500, 502, 503, 504, 529):
+        return failure("Provider temporarily unavailable", retryable=True)
+    return failure(
         "Client request failed; inspect account access and client version with mariana doctor"
     )
 
@@ -365,6 +430,9 @@ class NativeClient:
         result = None
         messages, usage, sources = [], {}, []
         failure = None
+        assistant_failure = None
+        failed = None
+        streamed_text = []
         total = 0
         tokens = UsageStream(self.provider)
         try:
@@ -392,6 +460,7 @@ class NativeClient:
                             if item.get("type") == "web_search":
                                 sources.append(item)
                         elif kind == "turn.completed":
+                            failure = None
                             usage = event.get("usage", {})
                             result = {
                                 "text": messages[-1] if messages else "",
@@ -416,7 +485,20 @@ class NativeClient:
                         elif kind == "result":
                             if event.get("is_error") or event.get("subtype") != "success":
                                 failure = error_from(json.dumps(event))
+                                if assistant_failure is not None:
+                                    assistant_failure.diagnostics["result_error"] = (
+                                        failure.diagnostics
+                                    )
+                                    failure = assistant_failure
+                                result = None
+                            elif assistant_failure is not None:
+                                # Some CLI versions report a successful agent-loop
+                                # exit even though the last assistant turn was an
+                                # API error. That text is not a finished review.
+                                failure = assistant_failure
+                                result = None
                             else:
+                                failure = None
                                 text = event.get("result", "")
                                 if event.get("structured_output") is not None:
                                     text = json.dumps(event["structured_output"])
@@ -427,6 +509,29 @@ class NativeClient:
                                     "api_equivalent_usd": event.get("total_cost_usd"),
                                 }
                         elif kind == "assistant":
+                            text = "\n".join(
+                                block.get("text", "")
+                                for block in event.get("message", {}).get("content", [])
+                                if block.get("type") == "text"
+                            )
+                            if text:
+                                messages.append(text)
+                            streamed_text.clear()
+                            assistant_failure = (
+                                error_from(
+                                    json.dumps(
+                                        {
+                                            "type": "assistant",
+                                            "error": event["error"],
+                                            "message": text,
+                                        }
+                                    )
+                                )
+                                if event.get("error")
+                                else None
+                            )
+                            if assistant_failure is not None:
+                                failure = assistant_failure
                             for block in event.get("message", {}).get("content", []):
                                 if (
                                     block.get("type") == "tool_use"
@@ -435,14 +540,23 @@ class NativeClient:
                                     sources.append(
                                         {"tool": "WebSearch", "input": block.get("input")}
                                     )
+                        elif kind == "error":
+                            failure = error_from(json.dumps(event))
+                        elif kind == "stream_event":
+                            streamed = event.get("event", {})
+                            if streamed.get("type") == "error":
+                                failure = error_from(json.dumps(streamed))
+                            delta = streamed.get("delta", {})
+                            if delta.get("type") == "text_delta":
+                                streamed_text.append(delta.get("text", ""))
                 code = await process.wait()
+                if failure:
+                    raise failure
                 if code or not result:
                     details = diagnostic(await stderr_task)
-                    raise failure or ClientError(
-                        "Client ended without a completed response"
-                        + (": " + details if details else ""),
-                        retryable=not bool(details),
-                    )
+                    if details:
+                        raise error_from(details)
+                    raise ClientError("Client ended without a completed response", retryable=True)
                 if not result["text"].strip():
                     raise ClientError("Client returned an empty final response", retryable=True)
                 result["model"] = (
@@ -452,12 +566,27 @@ class NativeClient:
                     result["token_usage"] = tokens.latest
                 return result
         except TimeoutError:
-            raise ClientError(
+            failed = ClientError(
                 "Client request timed out; provider usage may already have occurred", retryable=True
-            ) from None
+            )
+            failed.diagnostics["timeout"] = True
+            raise failed from None
+        except ClientError as exc:
+            failed = exc
+            raise
         finally:
             await terminate(process)
-            await stderr_task
+            stderr = await stderr_task
+            if failed is not None:
+                failed.diagnostics.update(
+                    provider=self.provider,
+                    exit_code=process.returncode,
+                    partial_text="\n".join(messages + ["".join(streamed_text)]).strip(),
+                    partial_sources=sources,
+                    partial_token_usage=tokens.latest,
+                )
+                if stderr:
+                    failed.diagnostics["stderr"] = diagnostic(stderr)
 
 
 async def _claude_metadata(config: Config, cwd: Path, *, usage=False) -> dict:

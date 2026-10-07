@@ -1,7 +1,9 @@
+import asyncio
 import json
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -16,7 +18,9 @@ from marianabot.clients import (
     claude_models,
     subscription_env,
 )
+from marianabot.engine import Engine
 from marianabot.limits import SubscriptionLimits
+from marianabot.reports import export_run
 
 
 @pytest.fixture
@@ -160,3 +164,236 @@ def test_subscription_environment_strips_paid_overrides(monkeypatch):
         )
     )
     assert clean["CLAUDE_CODE_DISABLE_FAST_MODE"] == "1"
+
+
+def stream_process(events, *, code=0, stderr=""):
+    stdout = asyncio.StreamReader()
+    stdout.feed_data(("\n".join(json.dumps(event) for event in events) + "\n").encode())
+    stdout.feed_eof()
+    errors = asyncio.StreamReader()
+    errors.feed_data(stderr.encode())
+    errors.feed_eof()
+    return SimpleNamespace(
+        returncode=code,
+        stdout=stdout,
+        stderr=errors,
+        stdin=SimpleNamespace(write=lambda data: None, drain=AsyncMock(), close=lambda: None),
+        wait=AsyncMock(return_value=code),
+    )
+
+
+async def test_claude_execution_error_retries_and_preserves_partial_history_and_usage(
+    fake_clients, config, store, monkeypatch, tmp_path
+):
+    config.research.max_retries = 1
+    error = {
+        "type": "result",
+        "subtype": "error_during_execution",
+        "is_error": True,
+        "errors": ["API Error: 500 api_error"],
+        "usage": {"input_tokens": 0, "output_tokens": 0},
+    }
+    partial = "Unfinished review: https://partial.invalid/report"
+    first = stream_process(
+        [
+            {
+                "type": "stream_event",
+                "event": {
+                    "type": "message_start",
+                    "message": {"id": "m1", "usage": {"input_tokens": 30}},
+                },
+            },
+            {
+                "type": "stream_event",
+                "event": {"type": "message_delta", "usage": {"output_tokens": 8}},
+            },
+            {
+                "type": "stream_event",
+                "event": {
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": partial},
+                },
+            },
+            error,
+        ],
+        stderr="Provider failed; Bearer private-token sk-secret",
+    )
+    second = stream_process(
+        [
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": "Completed review",
+                "usage": {"input_tokens": 10, "output_tokens": 20},
+            }
+        ]
+    )
+    launch = AsyncMock(side_effect=[first, second])
+    monkeypatch.setattr(clients, "launch", launch)
+    run_id = store.create_run("Recover a failed critic", config, demo=True)
+    engine = Engine(store, run_id)
+    engine.clients["anthropic"] = NativeClient(
+        "anthropic", config, store.directory, engine.limits["anthropic"]
+    )
+    waits = []
+
+    async def skip_wait(seconds, reason):
+        waits.append(reason)
+
+    engine.wait = skip_wait
+    result = await engine.call("JB", "critic", "Critique", {"plan": "Saved synthesis"})
+    assert result["text"] == "Completed review"
+    assert launch.await_count == 2 and len(waits) == 1
+    calls = store.calls(run_id)
+    assert [call["state"] for call in calls] == ["unknown", "done"]
+    rejected = calls[0]["result"]
+    assert rejected["retryable"] and not rejected["limited"]
+    assert rejected["diagnostics"]["subtype"] == "error_during_execution"
+    assert rejected["diagnostics"]["errors"] == error["errors"]
+    assert rejected["diagnostics"]["partial_text"] == partial
+    assert rejected["diagnostics"]["exit_code"] == 0
+    assert "private-token" not in json.dumps(rejected)
+    assert "sk-secret" not in json.dumps(rejected)
+    assert calls[1]["result"]["prompt"] == rejected["prompt"]
+    totals = store.usage_totals(run_id)["anthropic"]
+    assert (totals["input_tokens"], totals["output_tokens"], totals["incomplete"]) == (40, 28, 1)
+    assert store.cached(run_id, "critic")["text"] == "Completed review"
+    report = export_run(store, run_id, tmp_path / "export")
+    assert "partial.invalid" not in (report.parent / "citations.md").read_text()
+    assert "partial.invalid" in (report.parent / "history.json").read_text()
+    await engine.call("JB", "critic", "Critique", {})
+    assert launch.await_count == 2
+
+
+@pytest.mark.parametrize("provider", ["openai", "anthropic"])
+async def test_failure_after_success_is_rejected_even_with_zero_exit_code(
+    provider, fake_clients, config, store, monkeypatch
+):
+    successful = (
+        [
+            {"type": "item.completed", "item": {"type": "agent_message", "text": "Earlier output"}},
+            {"type": "turn.completed", "usage": {"input_tokens": 10, "output_tokens": 8}},
+        ]
+        if provider == "openai"
+        else [
+            {"type": "result", "subtype": "success", "is_error": False, "result": "Earlier output"}
+        ]
+    )
+    failure = {
+        "type": "error",
+        "error": {"type": "api_error", "message": "Unexpected failure", "status": 500},
+    }
+    monkeypatch.setattr(
+        clients, "launch", AsyncMock(return_value=stream_process([*successful, failure]))
+    )
+    client = NativeClient(
+        provider, config, store.directory, SubscriptionLimits(store, provider, config.subscription)
+    )
+    with pytest.raises(ClientError) as caught:
+        await client.complete("Same request")
+    assert caught.value.retryable
+    assert caught.value.diagnostics["error"]["type"] == "api_error"
+    assert caught.value.diagnostics["exit_code"] == 0
+
+
+@pytest.mark.parametrize("provider", ["openai", "anthropic"])
+async def test_recovered_stream_error_does_not_discard_a_later_success(
+    provider, fake_clients, config, store, monkeypatch
+):
+    failure = {"type": "error", "error": {"type": "api_error", "message": "Temporary failure"}}
+    success = (
+        [
+            {"type": "item.completed", "item": {"type": "agent_message", "text": "Recovered"}},
+            {"type": "turn.completed", "usage": {"input_tokens": 10, "output_tokens": 8}},
+        ]
+        if provider == "openai"
+        else [{"type": "result", "subtype": "success", "is_error": False, "result": "Recovered"}]
+    )
+    monkeypatch.setattr(
+        clients, "launch", AsyncMock(return_value=stream_process([failure, *success]))
+    )
+    client = NativeClient(
+        provider, config, store.directory, SubscriptionLimits(store, provider, config.subscription)
+    )
+    assert (await client.complete("Same request"))["text"] == "Recovered"
+
+
+async def test_stderr_server_failure_is_classified_and_redacted(
+    fake_clients, config, store, monkeypatch
+):
+    monkeypatch.setattr(
+        clients,
+        "launch",
+        AsyncMock(
+            return_value=stream_process([], code=1, stderr="API Error: 503. Bearer private-token")
+        ),
+    )
+    client = NativeClient(
+        "anthropic",
+        config,
+        store.directory,
+        SubscriptionLimits(store, "anthropic", config.subscription),
+    )
+    with pytest.raises(ClientError) as caught:
+        await client.complete("Saved request")
+    assert caught.value.retryable
+    assert caught.value.diagnostics["exit_code"] == 1
+    assert "private-token" not in json.dumps(caught.value.diagnostics)
+
+
+@pytest.mark.parametrize("result_subtype", ["success", "error_during_execution"])
+async def test_assistant_api_error_is_not_hidden_by_a_generic_terminal_result(
+    fake_clients, config, store, monkeypatch, result_subtype
+):
+    events = [
+        {
+            "type": "assistant",
+            "error": "authentication_failed",
+            "message": {"content": [{"type": "text", "text": "API Error: 401 Unauthorized"}]},
+        },
+        {
+            "type": "result",
+            "subtype": result_subtype,
+            "is_error": result_subtype != "success",
+            "errors": ["Unexpected execution failure"],
+            "result": "API Error: 401 Unauthorized",
+        },
+    ]
+    monkeypatch.setattr(clients, "launch", AsyncMock(return_value=stream_process(events)))
+    client = NativeClient(
+        "anthropic",
+        config,
+        store.directory,
+        SubscriptionLimits(store, "anthropic", config.subscription),
+    )
+    with pytest.raises(ClientError) as caught:
+        await client.complete("Saved request")
+    assert not caught.value.retryable and not caught.value.limited
+    assert caught.value.diagnostics["error"] == "authentication_failed"
+    assert "API Error: 401" in caught.value.diagnostics["partial_text"]
+
+
+async def test_later_clean_assistant_response_clears_an_api_error(
+    fake_clients, config, store, monkeypatch
+):
+    events = [
+        {
+            "type": "assistant",
+            "error": "api_error",
+            "message": {"content": [{"type": "text", "text": "API Error: 500"}]},
+        },
+        {
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": "Recovered review"}]},
+        },
+        {"type": "result", "subtype": "success", "is_error": False, "result": "Recovered review"},
+    ]
+    monkeypatch.setattr(clients, "launch", AsyncMock(return_value=stream_process(events)))
+    client = NativeClient(
+        "anthropic",
+        config,
+        store.directory,
+        SubscriptionLimits(store, "anthropic", config.subscription),
+    )
+    assert (await client.complete("Saved request"))["text"] == "Recovered review"

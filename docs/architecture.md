@@ -75,6 +75,16 @@ human_tests and dissent. Malformed output cannot advance a round. Validation err
 and temporary client failures have a bounded retry count; subscription exhaustion
 waits for reset independently of that retry count.
 
+Client failures retain their actual prompt, redacted error fields, exit code,
+stderr and any partial response in private call history. Partial text cannot become
+a completed checkpoint or citation, and failed calls do not turn partial token
+reports into final totals. Execution errors and transient server/transport failures
+use bounded retries; billing, access, model, request-format and explicit client
+limits remain distinct. The [Claude error guide](https://platform.claude.com/docs/en/api/errors)
+documents `api_error` and overload failures as transient server errors. An explicit
+stream failure is rejected even when the CLI exits with code zero; a later successful
+completion can clear an earlier recovered stream error.
+
 Prompts use a strict evidence size bound after semantic compaction. The compactor
 runs as MB through the normal OpenAI gate, archives source text before summarizing,
 and reuses completed summaries by content identity. Large fields are processed in

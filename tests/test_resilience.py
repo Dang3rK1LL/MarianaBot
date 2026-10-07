@@ -98,6 +98,53 @@ def test_billing_failure_is_not_retried_as_subscription_reset():
     assert not error.retryable and not error.limited
 
 
+@pytest.mark.parametrize(
+    "error",
+    [
+        'API Error: 500 {"error":{"type":"api_error","message":"Unexpected failure"}}',
+        '{"type":"result","subtype":"error_during_execution","errors":["Unexpected failure"]}',
+        '{"type":"error","error":{"type":"overloaded_error","message":"Busy"}}',
+        "API Error: No response from API",
+    ],
+)
+def test_execution_and_server_errors_are_retryable(error):
+    classified = error_from(error)
+    assert classified.retryable and not classified.limited
+    assert classified.diagnostics
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "billing_error",
+        "authentication_error",
+        "model_not_found",
+        "invalid_request_error",
+        "prompt is too long",
+        "error_max_turns",
+        "error_max_budget_usd",
+        "error_max_structured_output_retries",
+    ],
+)
+def test_permanent_error_is_not_hidden_by_generic_execution_subtype(reason):
+    classified = error_from(
+        '{"type":"result","subtype":"error_during_execution","errors":["' + reason + '"]}'
+    )
+    assert not classified.retryable and not classified.limited
+
+
+def test_quota_error_still_waits_and_success_metadata_cannot_change_error_classification():
+    error = error_from(
+        '{"type":"result","subtype":"error_during_execution","errors":["rate_limit_error"]}'
+    )
+    assert error.limited and not error.retryable
+    generic = error_from(
+        '{"type":"error","error":{"message":"Unrecognized failure"},"usage":{"authentication":true,"output_tokens":500}}'
+    )
+    assert str(generic).startswith("Client request failed")
+    assert "usage" not in generic.diagnostics
+
+
 def test_reopen_store_preserves_checkpoints(store, config):
     run_id = store.create_run("Durable checkpoint", config, demo=True)
     call = store.begin_call(run_id, "stable", "RB", "openai", config.rb.model)

@@ -320,7 +320,17 @@ class Engine:
                         raise
                     error = ClientError(message, retryable=True)
                 except ClientError as exc:
-                    self.store.finish(call_id, "limited" if exc.limited else "unknown")
+                    self.store.finish(
+                        call_id,
+                        "limited" if exc.limited else "unknown",
+                        {
+                            "prompt": call_content,
+                            "error": str(exc),
+                            "retryable": exc.retryable,
+                            "limited": exc.limited,
+                            "diagnostics": exc.diagnostics,
+                        },
+                    )
                     error = exc
                 except BaseException:
                     self.store.finish(call_id, "unknown")
