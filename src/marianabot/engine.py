@@ -15,7 +15,7 @@ from marianabot.clients import (
 )
 from marianabot.config import Config
 from marianabot.limits import SubscriptionLimits
-from marianabot.memory import Compactor, SummaryValidationError, size
+from marianabot.memory import Compactor, SummaryTooLong, SummaryValidationError, size
 from marianabot.prompts import (
     JB_ROLES,
     JUDGE,
@@ -314,6 +314,10 @@ class Engine:
                         "validation_error": message,
                     }
                     self.store.finish(call_id, "invalid", rejected)
+                    if internal_compaction and isinstance(exc, SummaryTooLong):
+                        # The compactor reduces this validated candidate instead
+                        # of regenerating the same oversized source on every retry.
+                        raise
                     error = ClientError(message, retryable=True)
                 except ClientError as exc:
                     self.store.finish(call_id, "limited" if exc.limited else "unknown")

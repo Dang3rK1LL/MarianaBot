@@ -45,13 +45,22 @@ the paused run. It does not silently shorten protected text.
 Original text is archived before compaction. Summaries have stable content-based
 identities and are reused across parallel agents and restarts. The memory checkpoint
 advances only after the necessary summary succeeds. Invalid JSON, mismatched source
-IDs, oversized/empty summaries and newly invented source URLs fail validation;
-bounded retries and pause behavior use the ordinary worker controls.
+IDs, empty summaries and newly invented source URLs fail validation; bounded
+retries and pause behavior use the ordinary worker controls. Size targets leave
+headroom below the hard evidence limit, with a smaller suggested word budget.
+An otherwise valid oversized summary is archived and summarized again instead of
+repeatedly regenerating the original source. Resume reuses the shortest saved
+candidate after rechecking its source ID, content and URLs. These candidates remain
+invalid call records until a bounded replacement is available; only the finished
+replacement can become a memory checkpoint. Size repair must reduce the source
+by more than 10% per step and is bounded by `research.max_retries`; failure to make
+progress pauses the run with its originals and candidates intact.
 Rejected responses, their prompts and validation reasons remain in the private
 call history. Compaction retries receive the failed check so they can correct it;
 valid JSON inside a single Markdown code fence is accepted. The same source,
 length and URL checks still apply. Rejected responses are never used as memory
-or included in the exported citation index.
+or included in the exported citation index. Oversized candidates may be supplied
+only to another compaction call, not directly to research or review agents.
 
 Compaction uses the selected MB/RB model and effort, shares their concurrency and
 quota gate, and contributes to the ChatGPT usage row. `/pause` can cancel it. There

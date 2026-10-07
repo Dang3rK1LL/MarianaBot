@@ -164,7 +164,7 @@ async def test_invalid_summary_never_replaces_a_good_checkpoint(
             return {"text": f"```json\n{raw}\n```" if fenced else raw, "usage": {}}
 
     engine.clients["openai"] = InvalidSummary()
-    with pytest.raises(Halt, match="Memory compaction failed validation"):
+    with pytest.raises((Halt, ClientError), match="Memory compaction failed validation"):
         await engine.memory.compact("Research detail. " * 300, 1000, "invalid")
     assert store.memory(engine.run_id)["text"] == "Existing valid memory"
     assert all(row["summary"] is None for row in store.compactions(engine.run_id))
@@ -238,10 +238,170 @@ async def test_compaction_retry_explains_failure_and_preserves_each_attempt(
     assert "1,000-character target (1,001 characters)" in client.prompts[2]
     assert "source_id does not match" not in client.prompts[2]
     assert [call["result"]["prompt"] for call in calls] == client.prompts
-    assert all(data_from(value)["source"] == source for value in client.prompts)
+    assert [data_from(value)["source"] for value in client.prompts] == [
+        source,
+        source,
+        "x" * 1001,
+    ]
     assert store.usage_totals(engine.run_id)["openai"]["input_tokens"] == 300
     assert await engine.memory.compact(source, 1000, "retry") == "FACT-1: test demand."
     assert len(store.calls(engine.run_id)) == 3
+
+
+async def test_size_repair_reduces_candidates_and_checkpoints_only_bounded_memory(store, config):
+    engine, _ = engine_with(store, config)
+    engine.config.research.max_retries = 2
+    source = "FACT-1: unproven demand. " * 80 + "https://evidence.example/report"
+    candidates = [
+        "FACT-1: unproven demand. " * 35 + "https://evidence.example/report",
+        "FACT-1: unproven demand. " * 27 + "https://evidence.example/report",
+        "FACT-1: unproven demand. Source: https://evidence.example/report",
+    ]
+
+    class LengthRepair(DemoClient):
+        def __init__(self):
+            self.inputs = []
+
+        async def complete(self, prompt, search=False):
+            data = data_from(prompt)
+            self.inputs.append(data)
+            return {
+                "text": json.dumps(
+                    {"source_id": data["source_id"], "summary": candidates[len(self.inputs) - 1]}
+                ),
+                "usage": {"input_tokens": 100, "output_tokens": 20},
+            }
+
+    client = LengthRepair()
+    engine.clients["openai"] = client
+    summary = await engine.memory.compact(source, 600, "evidence")
+    assert summary == candidates[-1]
+    assert [item["source"] for item in client.inputs] == [source, *candidates[:-1]]
+    assert all(int(item["target_chars"]) < int(item["max_chars"]) == 600 for item in client.inputs)
+    assert all(int(item["target_words"]) <= 45 for item in client.inputs)
+    calls = store.calls(engine.run_id)
+    assert [call["state"] for call in calls] == ["invalid", "invalid", "done"]
+    assert all(store.cached(engine.run_id, call["task"]) is None for call in calls[:-1])
+    assert {row["source"] for row in store.compactions(engine.run_id)} == {
+        source,
+        *candidates[:-1],
+    }
+    assert all(row["summary"] == summary for row in store.compactions(engine.run_id))
+    assert store.usage_totals(engine.run_id)["openai"]["input_tokens"] == 300
+    assert await engine.memory.compact(source, 600, "again") == summary
+    assert len(client.inputs) == 3
+
+
+async def test_restart_shortens_saved_oversized_summary_without_repeating_original(store, config):
+    engine, _ = engine_with(store, config)
+    engine.config.research.max_retries = 1
+    source = "FACT-1: test willingness to pay. " * 60
+    candidate = "FACT-1: test willingness to pay. " * 25
+
+    class PausingRepair(DemoClient):
+        def __init__(self):
+            self.inputs = []
+
+        async def complete(self, prompt, search=False):
+            data = data_from(prompt)
+            self.inputs.append(data)
+            if len(self.inputs) > 1:
+                raise Halt("paused", "Owner requested pause")
+            return {
+                "text": json.dumps({"source_id": data["source_id"], "summary": candidate}),
+                "usage": {},
+            }
+
+    client = PausingRepair()
+    engine.clients["openai"] = client
+    with pytest.raises(Halt, match="Owner requested pause"):
+        await engine.memory.compact(source, 600, "first")
+    before = store.calls(engine.run_id)
+    assert [call["state"] for call in before] == ["invalid", "unknown"]
+    resumed = Engine(store, engine.run_id, clients={"openai": Summarizer()})
+    resumed.config.research.max_retries = 1
+    summary = await resumed.memory.compact(source, 600, "resume")
+    assert "FACT-1" in summary
+    assert [item["source"] for item in resumed.clients["openai"].inputs] == [candidate]
+    assert store.calls(engine.run_id)[:2] == before
+    assert store.calls(engine.run_id)[-1]["task"] == before[-1]["task"]
+
+
+@pytest.mark.parametrize("shrinks", [False, True])
+async def test_size_repair_stops_without_progress_or_when_budget_is_exhausted(
+    store, config, shrinks
+):
+    engine, _ = engine_with(store, config)
+    engine.config.research.max_retries = 1
+    store.save_memory(engine.run_id, 1, "Good checkpoint")
+
+    class UnboundedSummary(DemoClient):
+        def __init__(self):
+            self.inputs = []
+
+        async def complete(self, prompt, search=False):
+            data = data_from(prompt)
+            self.inputs.append(data)
+            return {
+                "text": json.dumps(
+                    {
+                        "source_id": data["source_id"],
+                        "summary": data["source"][: int(len(data["source"]) * 0.8)]
+                        if shrinks
+                        else data["source"],
+                    }
+                ),
+                "usage": {},
+            }
+
+    client = UnboundedSummary()
+    engine.clients["openai"] = client
+    with pytest.raises(ClientError, match="size repair limit" if shrinks else "insufficient size"):
+        await engine.memory.compact("Long evidence. " * 100, 600, "stalled")
+    assert len(client.inputs) == (2 if shrinks else 1)
+    assert store.memory(engine.run_id)["text"] == "Good checkpoint"
+    assert all(row["summary"] is None for row in store.compactions(engine.run_id))
+    assert all(call["state"] == "invalid" for call in store.calls(engine.run_id))
+
+
+@pytest.mark.parametrize("bad", ["source_id", "invented_url"])
+async def test_oversized_candidate_must_pass_identity_and_url_checks_before_repair(
+    store, config, bad
+):
+    engine, _ = engine_with(store, config)
+    engine.config.research.max_retries = 1
+
+    async def skip_backoff(*args):
+        pass
+
+    engine.wait = skip_backoff
+
+    class InvalidCandidate(DemoClient):
+        def __init__(self):
+            self.inputs = []
+
+        async def complete(self, prompt, search=False):
+            data = data_from(prompt)
+            self.inputs.append(data)
+            return {
+                "text": json.dumps(
+                    {
+                        "source_id": "wrong" if bad == "source_id" else data["source_id"],
+                        "summary": "Long candidate. " * 50 + "https://invented.invalid",
+                    }
+                ),
+                "usage": {},
+            }
+
+    client = InvalidCandidate()
+    engine.clients["openai"] = client
+    source = "Original evidence. " * 100
+    for _ in range(2):
+        with pytest.raises(Halt, match="source_id does not match|URL absent from the source"):
+            await engine.memory.compact(source, 600, "invalid")
+    assert len(client.inputs) == 4
+    assert all(item["source"] == source for item in client.inputs)
+    assert all(row["summary"] is None for row in store.compactions(engine.run_id))
 
 
 async def test_pause_during_compaction_keeps_round_and_resumes_without_repeating_research(
