@@ -100,7 +100,7 @@ def export_run(store: Store, run_id: str, target: Path) -> Path:
     )
     urls = {}
     for call in calls:
-        if call["result"]:
+        if call["state"] == "done" and call["result"]:
             for url in re.findall(r'https?://[^\s<>"\)]+', call["result"].get("text", "")):
                 urls.setdefault(url.rstrip(".,;]"), set()).add(call["brain"])
     evidence = [

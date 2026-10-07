@@ -6,7 +6,7 @@ import json
 import re
 import time
 
-from pydantic import Field
+from pydantic import Field, ValidationError
 
 from marianabot.clients import ClientError
 from marianabot.config import StrictModel
@@ -34,6 +34,10 @@ def urls(text: str) -> set[str]:
 class Digest(StrictModel):
     source_id: str = Field(min_length=1)
     summary: str = Field(min_length=1)
+
+
+class SummaryValidationError(ValueError):
+    """A safe validation explanation for the next retry and the saved call history."""
 
 
 COMPACT = """COMPACT_MEMORY: Act as MB's research archivist. Condense the supplied
@@ -104,17 +108,24 @@ class Compactor:
             source_urls = urls(text)
 
             def validate(result):
-                digest = Digest.model_validate_json(result["text"])
-                if (
-                    digest.source_id != key
-                    or not digest.summary.strip()
-                    or len(digest.summary) > target
-                ):
-                    raise ValueError(
-                        "Compactor returned a mismatched source or exceeded its size target"
+                raw = result["text"].strip()
+                fenced = re.fullmatch(r"```(?:json)?[ \t]*\r?\n([\s\S]*)\r?\n```", raw, re.I)
+                if fenced:
+                    raw = fenced[1]
+                try:
+                    digest = Digest.model_validate_json(raw)
+                except ValidationError:
+                    raise SummaryValidationError("invalid JSON or summary schema") from None
+                if digest.source_id != key:
+                    raise SummaryValidationError("source_id does not match the archived source")
+                if not digest.summary.strip():
+                    raise SummaryValidationError("summary contains only whitespace")
+                if len(digest.summary) > target:
+                    raise SummaryValidationError(
+                        f"summary exceeds the {target:,}-character target ({len(digest.summary):,} characters)"
                     )
                 if not urls(digest.summary) <= source_urls:
-                    raise ValueError("Compactor introduced a source URL absent from its input")
+                    raise SummaryValidationError("summary introduces a URL absent from the source")
                 result["digest"] = digest.summary
 
             self.engine.emit(f"MB · compacting {label}")

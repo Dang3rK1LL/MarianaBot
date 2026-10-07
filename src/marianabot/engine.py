@@ -15,7 +15,7 @@ from marianabot.clients import (
 )
 from marianabot.config import Config
 from marianabot.limits import SubscriptionLimits
-from marianabot.memory import Compactor, size
+from marianabot.memory import Compactor, SummaryValidationError, size
 from marianabot.prompts import (
     JB_ROLES,
     JUDGE,
@@ -258,6 +258,7 @@ class Engine:
                 data = data | self.memory.context()
             data = await self.memory.prepare(data, max_chars)
         content = prompt(instruction, data, max_chars, actual_search)
+        request_content = content
         attempt = 0
         while True:
             async with self.gates[provider]:
@@ -265,18 +266,20 @@ class Engine:
                 self.check()
                 call_id = self.store.begin_call(self.run_id, task, brain, provider, model)
                 self.emit(f"{brain} · {task} · working")
+                call_content = request_content
+                result = None
                 try:
                     client = self.clients[provider]
                     if isinstance(client, NativeClient):
                         result = await client.complete(
-                            content,
+                            call_content,
                             actual_search,
                             on_usage=lambda usage, final, call_id=call_id: self.store.record_usage(
                                 call_id, usage, final
                             ),
                         )
                     else:
-                        result = await client.complete(content, actual_search)
+                        result = await client.complete(call_content, actual_search)
                     if structured:
                         raw = result["text"].strip()
                         if raw.startswith(chr(96) * 3):
@@ -284,18 +287,34 @@ class Engine:
                         result["review"] = Review.model_validate_json(raw).model_dump()
                     if validate:
                         validate(result)
-                    result["prompt"] = content
+                    result["prompt"] = call_content
                     self.store.finish(call_id, "done", result)
                     self.emit(f"{brain} · {task} · saved")
                     return result
-                except (ValidationError, ValueError):
-                    self.store.finish(call_id, "invalid")
-                    error = ClientError(
+                except (ValidationError, ValueError) as exc:
+                    message = (
                         "Memory compaction failed validation; originals retained"
                         if internal_compaction
-                        else "Judge output failed schema validation",
-                        retryable=True,
+                        else "Judge output failed schema validation"
                     )
+                    if internal_compaction and isinstance(exc, SummaryValidationError):
+                        message = f"Memory compaction failed validation: {exc}; originals retained"
+                        request_content = prompt(
+                            instruction
+                            + f"\nCOMPACTION_RETRY: The previous summary failed validation: {exc}. "
+                            "Correct this in a fresh summary of the original source. Return only JSON "
+                            "with the exact source_id and a non-empty summary within target_chars "
+                            "(characters, not tokens). Copy any URLs exactly from the supplied source.",
+                            data,
+                            max_chars,
+                            actual_search,
+                        )
+                    rejected = dict(result or {}) | {
+                        "prompt": call_content,
+                        "validation_error": message,
+                    }
+                    self.store.finish(call_id, "invalid", rejected)
+                    error = ClientError(message, retryable=True)
                 except ClientError as exc:
                     self.store.finish(call_id, "limited" if exc.limited else "unknown")
                     error = exc

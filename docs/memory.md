@@ -47,6 +47,11 @@ identities and are reused across parallel agents and restarts. The memory checkp
 advances only after the necessary summary succeeds. Invalid JSON, mismatched source
 IDs, oversized/empty summaries and newly invented source URLs fail validation;
 bounded retries and pause behavior use the ordinary worker controls.
+Rejected responses, their prompts and validation reasons remain in the private
+call history. Compaction retries receive the failed check so they can correct it;
+valid JSON inside a single Markdown code fence is accepted. The same source,
+length and URL checks still apply. Rejected responses are never used as memory
+or included in the exported citation index.
 
 Compaction uses the selected MB/RB model and effort, shares their concurrency and
 quota gate, and contributes to the ChatGPT usage row. `/pause` can cancel it. There

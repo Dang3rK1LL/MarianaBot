@@ -134,34 +134,114 @@ async def test_protected_overflow_pauses_before_any_compaction_or_model_call(sto
     assert not store.calls(engine.run_id)
 
 
-@pytest.mark.parametrize("bad", ["oversize", "source_id", "invented_url"])
-async def test_invalid_summary_never_replaces_a_good_checkpoint(store, config, bad):
+@pytest.mark.parametrize("bad", ["oversize", "source_id", "invented_url", "empty", "invalid_json"])
+@pytest.mark.parametrize("fenced", [False, True])
+async def test_invalid_summary_never_replaces_a_good_checkpoint(
+    store, config, bad, fenced, tmp_path
+):
     engine, _ = engine_with(store, config)
     store.save_memory(engine.run_id, 1, "Existing valid memory")
 
     class InvalidSummary(DemoClient):
         async def complete(self, prompt, search=False):
             data = data_from(prompt)
-            return {
-                "text": json.dumps(
+            raw = (
+                "not JSON"
+                if bad == "invalid_json"
+                else json.dumps(
                     {
                         "source_id": "wrong" if bad == "source_id" else data["source_id"],
                         "summary": "x" * 10001
                         if bad == "oversize"
                         else "https://invented.invalid"
                         if bad == "invented_url"
+                        else "   "
+                        if bad == "empty"
                         else "small",
                     }
-                ),
-                "usage": {},
-            }
+                )
+            )
+            return {"text": f"```json\n{raw}\n```" if fenced else raw, "usage": {}}
 
     engine.clients["openai"] = InvalidSummary()
     with pytest.raises(Halt, match="Memory compaction failed validation"):
         await engine.memory.compact("Research detail. " * 300, 1000, "invalid")
     assert store.memory(engine.run_id)["text"] == "Existing valid memory"
     assert all(row["summary"] is None for row in store.compactions(engine.run_id))
-    assert store.calls(engine.run_id)[-1]["state"] == "invalid"
+    rejected = store.calls(engine.run_id)[-1]
+    assert rejected["state"] == "invalid"
+    assert rejected["result"]["text"]
+    assert "Memory compaction failed validation" in rejected["result"]["validation_error"]
+    assert "COMPACT_MEMORY" in rejected["result"]["prompt"]
+    assert store.cached(engine.run_id, rejected["task"]) is None
+    if bad == "invented_url":
+        report = export_run(store, engine.run_id, tmp_path / "rejected-export")
+        assert "https://invented.invalid" not in (report.parent / "citations.md").read_text()
+        assert "https://invented.invalid" in (report.parent / "history.json").read_text()
+
+
+@pytest.mark.parametrize("fence", ["json", ""])
+async def test_fenced_summary_keeps_source_and_url_validation(store, config, fence):
+    engine, _ = engine_with(store, config)
+    summary = "FACT-1: test demand. Source: https://evidence.example/report"
+
+    class FencedSummary(DemoClient):
+        async def complete(self, prompt, search=False):
+            data = data_from(prompt)
+            payload = json.dumps({"source_id": data["source_id"], "summary": summary})
+            return {"text": f"```{fence}\n{payload}\n```", "usage": {}}
+
+    engine.clients["openai"] = FencedSummary()
+    source = "FACT-1: test demand. " * 70 + "https://evidence.example/report"
+    assert await engine.memory.compact(source, 1000, "fenced") == summary
+    assert len(store.calls(engine.run_id)) == 1
+    assert store.calls(engine.run_id)[0]["state"] == "done"
+    assert store.compactions(engine.run_id)[0]["source"] == source
+
+
+async def test_compaction_retry_explains_failure_and_preserves_each_attempt(
+    store, config, monkeypatch
+):
+    engine, _ = engine_with(store, config)
+    engine.config.research.max_retries = 2
+
+    async def skip_backoff(*args):
+        pass
+
+    monkeypatch.setattr(engine, "wait", skip_backoff)
+
+    class CorrectingSummary(DemoClient):
+        def __init__(self):
+            self.prompts = []
+
+        async def complete(self, prompt, search=False):
+            self.prompts.append(prompt)
+            data = data_from(prompt)
+            attempt = len(self.prompts)
+            return {
+                "text": json.dumps(
+                    {
+                        "source_id": "wrong" if attempt == 1 else data["source_id"],
+                        "summary": "x" * 1001 if attempt == 2 else "FACT-1: test demand.",
+                    }
+                ),
+                "usage": {"input_tokens": 100, "output_tokens": 20},
+            }
+
+    client = CorrectingSummary()
+    engine.clients["openai"] = client
+    source = "FACT-1: test demand. " * 70
+    assert await engine.memory.compact(source, 1000, "retry") == "FACT-1: test demand."
+    calls = store.calls(engine.run_id)
+    assert [call["state"] for call in calls] == ["invalid", "invalid", "done"]
+    assert "source_id does not match" in client.prompts[1]
+    assert "1,000-character target (1,001 characters)" in client.prompts[2]
+    assert "source_id does not match" not in client.prompts[2]
+    assert [call["result"]["prompt"] for call in calls] == client.prompts
+    assert all(data_from(value)["source"] == source for value in client.prompts)
+    assert store.usage_totals(engine.run_id)["openai"]["input_tokens"] == 300
+    assert await engine.memory.compact(source, 1000, "retry") == "FACT-1: test demand."
+    assert len(store.calls(engine.run_id)) == 3
 
 
 async def test_pause_during_compaction_keeps_round_and_resumes_without_repeating_research(
