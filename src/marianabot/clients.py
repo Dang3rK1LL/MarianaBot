@@ -695,7 +695,7 @@ class DemoClient:
             text = json.dumps(
                 {
                     "source_id": data["source_id"],
-                    "summary": "DEMO memory fixture: demand and unit economics require real-world validation. Original source text is archived.",
+                    "summary": "DEMO memory fixture: public demand signals and published economics remain uncertain. Original source text is archived.",
                 }
             )
         elif "JUDGE_JSON" in prompt:
@@ -703,34 +703,33 @@ class DemoClient:
                 {
                     "score": 72,
                     "verdict": "revise",
-                    "strengths": ["A measurable pilot precedes larger investment"],
+                    "strengths": ["The memo separates public evidence from assumptions"],
                     "blocking_issues": ["Customer demand and acquisition costs remain unvalidated"],
-                    "next_prompt": "Specify a small customer pilot and explicit go/no-go thresholds.",
-                    "human_tests": [
-                        "Interview 10 potential buyers and seek 3 paid pilot commitments"
-                    ],
+                    "next_prompt": "Check published competitor prices and buyer reviews online.",
+                    "human_tests": [],
+                    "online_checks": ["Compare documented prices and public reviews"],
+                    "limitations": ["Public interest does not establish willingness to pay"],
+                    "foundation_ready": True,
                     "dissent": ["A stronger narrative is not evidence of demand"],
                 }
             )
         elif "MASTER_INTAKE" in prompt or "MASTER_STEER" in prompt:
             text = (
-                "# DEMO research brief\n\nInvestigate the supplied problem with a small, reversible pilot.\n"
+                "# DEMO research brief\n\nAnswer the supplied problem using published online evidence.\n"
                 "Track demand, unit economics and operational constraints.\n"
                 "Assumptions: budget and target customers still need confirmation.\n"
-                "Questions for the owner: who is the first paying customer, and what is the loss limit?\n"
-                "Success: a costed action plan with falsifiable milestones."
+                "Use labeled assumptions for missing private information.\n"
+                "Success: a concise evidence-based recommendation with limitations."
             )
         elif "MASTER_ANSWER" in prompt:
-            text = "DEMO MB: The latest draft still needs evidence from customer interviews and a paid pilot."
+            text = "DEMO MB: The latest draft still needs public pricing and demand evidence. No owner action is required."
         else:
             text = (
-                "# DEMO business and action plan\n\nThis is an offline fixture, not model-generated research.\n\n"
-                "1. Interview 10 target customers during week one; owner: founder.\n"
-                "2. Offer 3 paid pilots during week two; set a loss limit before launch.\n"
-                "3. Record acquisition cost, delivery time and contribution margin.\n"
-                "4. Proceed only if buyers commit and the pilot can achieve positive contribution margin.\n\n"
+                "## Round summary\nThis is an offline fixture, not model-generated research.\n\n"
+                "## Changes this round\nPublic evidence remains incomplete.\n\n"
+                "## Next direction\nCompare documented competitor prices and buyer reviews online.\n\n"
                 "Unknowns: willingness to pay, acquisition costs and local requirements.\n"
-                "Dissent: stop if enthusiasm fails to turn into commitments.\n"
+                "Limitation: online interest does not establish willingness to pay.\n"
                 "Sources: none; illustrative demo only."
             )
         return {

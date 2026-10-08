@@ -38,7 +38,7 @@ mariana status RUN_ID
 mariana watch RUN_ID
 mariana ask RUN_ID "Which objections have been resolved with evidence?"
 mariana messages RUN_ID
-mariana steer RUN_ID "I interviewed five customers; here are their responses..."
+mariana steer RUN_ID "Keep the Hungarian market and EUR 500 budget. Validate online only."
 ~~~
 
 Ask uses an available MB slot while the worker runs. MB shares OpenAI usage with
@@ -49,8 +49,9 @@ and included in exported reports.
 The chat interface starts an MB-only worker for questions on paused or finished
 runs. Shell `ask` only queues a question; open that session in chat and use
 `/retry` if no research worker is active.
-A pause for human evidence or a plateau requires new steering to make progress;
-simply resuming the unchanged brief reaches the same stopping condition.
+Research continues after legacy human-evidence verdicts. Online evidence gaps
+remain limitations; an exhausted online-evidence plateau completes the run.
+Ordinary chat text is feedback; use /ask for a question without steering.
 
 ## Stopping and restarting
 
@@ -84,7 +85,7 @@ outputs, including intermediate work, are in history.json. Citation URLs are
 leads to inspect, not independently verified facts.
 
 Exports also include `memory.md`. `history.json` retains original compaction
-sources, summaries and released pins. Compaction pauses on validation failure or
+sources, summaries and released pins. Compaction uses a labeled source extract after exhausted validation retries; it pauses on
 protected-context overflow; it never silently clips protected notes. Inspect
 `/memory` in chat and release obsolete notes with `/unpin ID`, or explicitly
 resume with a larger `research.max_context_chars` configuration where appropriate.

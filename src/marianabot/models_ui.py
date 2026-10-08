@@ -5,7 +5,7 @@ from pathlib import Path
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Select, Static
 
@@ -34,38 +34,49 @@ class ModelsScreen(ModalScreen[Config | None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="model-dialog"):
             yield Static("Models for new research", classes="dialog-title")
-            yield Static("Choose a model and its reasoning effort.", id="model-explanation")
-            for provider, title in (
-                ("rb", "ChatGPT · research + master (RB / MB)"),
-                ("jb", "Claude · judge (JB)"),
-            ):
-                brain = getattr(self.config, provider)
-                with Horizontal(classes="model-label"):
-                    yield Static(title, classes="model-name")
-                    yield Static("Effort", classes="effort-label")
-                with Horizontal(classes="model-row"):
-                    yield Select(
-                        [(brain.model, brain.model)],
-                        value=brain.model,
-                        allow_blank=False,
-                        id=f"{provider}-model",
-                        classes="model-choice",
-                        disabled=True,
-                    )
-                    yield Select(
-                        [(effort_label(brain.effort), brain.effort)],
-                        value=brain.effort,
-                        allow_blank=False,
-                        id=f"{provider}-effort",
-                        classes="effort-choice",
-                        disabled=True,
-                    )
-            yield Static("Loading available models…", id="model-status", markup=False)
-            if self.current_run:
+            with VerticalScroll(id="model-fields"):
                 yield Static(
-                    f"This run keeps {self.current_run.rb.model} ({effort_label(self.current_run.rb.effort)}) / {self.current_run.jb.model} ({effort_label(self.current_run.jb.effort)}).",
-                    id="current-models",
+                    "Adaptive uses efficient subscription models for routine work and the RB/JB ceilings for difficult decisions. MB has its own lightweight model. Fable and reported token-billing models are excluded.",
+                    id="model-explanation",
                 )
+                yield Select(
+                    [("Adaptive task routing", "adaptive"), ("Fixed RB/JB models", "fixed")],
+                    value=self.config.routing.mode,
+                    allow_blank=False,
+                    id="routing-mode",
+                )
+                for provider, title in (
+                    ("mb", "ChatGPT · master (MB)"),
+                    ("rb", "ChatGPT · research ceiling (RB)"),
+                    ("jb", "Claude · judge ceiling (JB)"),
+                ):
+                    brain = getattr(self.config, provider)
+                    with Horizontal(classes="model-label"):
+                        yield Static(title, classes="model-name")
+                        yield Static("Effort", classes="effort-label")
+                    with Horizontal(classes="model-row"):
+                        yield Select(
+                            [(brain.model, brain.model)],
+                            value=brain.model,
+                            allow_blank=False,
+                            id=f"{provider}-model",
+                            classes="model-choice",
+                            disabled=True,
+                        )
+                        yield Select(
+                            [(effort_label(brain.effort), brain.effort)],
+                            value=brain.effort,
+                            allow_blank=False,
+                            id=f"{provider}-effort",
+                            classes="effort-choice",
+                            disabled=True,
+                        )
+                yield Static("Loading available models…", id="model-status", markup=False)
+                if self.current_run:
+                    yield Static(
+                        "This run retains its saved routing settings. Preferences apply to new research.",
+                        id="current-models",
+                    )
             yield Static("", id="model-error", markup=False)
             with Horizontal(id="model-actions"):
                 yield Button("Save", id="save-models", disabled=True)
@@ -74,7 +85,7 @@ class ModelsScreen(ModalScreen[Config | None]):
                 yield Button("Cancel", id="cancel-models")
 
     def on_mount(self):
-        for provider in ("rb", "jb"):
+        for provider in ("mb", "rb", "jb"):
             self.query_one(
                 f"#{provider}-effort"
             ).tooltip = "Reasoning effort. Higher levels can use more of your allowance."
@@ -86,29 +97,30 @@ class ModelsScreen(ModalScreen[Config | None]):
         for button in ("save", "default", "retry"):
             self.query_one(f"#{button}-models", Button).disabled = True
         self.query_one("#model-status", Static).update("Loading available models…")
-        for provider in ("rb", "jb"):
+        for provider in ("mb", "rb", "jb"):
             for field in ("model", "effort"):
                 self.query_one(f"#{provider}-{field}", Select).disabled = True
 
         async def load(provider):
             try:
                 models = await load_models(provider, self.config, self.cwd)
-                self.catalogs[provider] = {model.model: model for model in models}
-                selector = self.query_one(f"#{provider}-model", Select)
-                selected = selector.value
-                options = [(model.label, model.model) for model in models]
-                if selected not in self.catalogs[provider]:
-                    options.append((f"{selected} (unavailable)", selected))
-                with self.prevent(Select.Changed):
-                    selector.set_options(options)
-                    selector.value = selected
-                    selector.disabled = False
-                    self.sync_effort(provider)
+                for target in ("mb", "rb") if provider == "rb" else ("jb",):
+                    self.catalogs[target] = {model.model: model for model in models}
+                    selector = self.query_one(f"#{target}-model", Select)
+                    selected = selector.value
+                    options = [(model.label, model.model) for model in models]
+                    if selected not in self.catalogs[target]:
+                        options.append((f"{selected} (unavailable)", selected))
+                    with self.prevent(Select.Changed):
+                        selector.set_options(options)
+                        selector.value = selected
+                        selector.disabled = False
+                        self.sync_effort(target)
             except (ClientError, OSError, ValueError):
                 self.errors[provider] = "Model list unavailable. Check login, then Retry."
 
         await asyncio.gather(load("rb"), load("jb"))
-        ready = len(self.catalogs) == 2 and not self.errors
+        ready = len(self.catalogs) == 3 and not self.errors
         self.query_one("#save-models", Button).disabled = not ready
         self.query_one("#default-models", Button).disabled = not ready
         self.query_one("#retry-models", Button).disabled = False
@@ -139,6 +151,7 @@ class ModelsScreen(ModalScreen[Config | None]):
 
     @on(Select.Changed, "#rb-model")
     @on(Select.Changed, "#jb-model")
+    @on(Select.Changed, "#mb-model")
     def model_changed(self, event: Select.Changed):
         if event.value == event.select.value:
             self.sync_effort(event.select.id.split("-")[0])
@@ -153,14 +166,15 @@ class ModelsScreen(ModalScreen[Config | None]):
         defaults = Config()
         if any(
             getattr(defaults, provider).model not in self.catalogs.get(provider, {})
-            for provider in ("rb", "jb")
+            for provider in ("mb", "rb", "jb")
         ):
             self.query_one("#model-error", Static).update(
                 "A default model is unavailable. Choose from the available models."
             )
             return
         with self.prevent(Select.Changed):
-            for provider in ("rb", "jb"):
+            self.query_one("#routing-mode", Select).value = defaults.routing.mode
+            for provider in ("mb", "rb", "jb"):
                 brain = getattr(defaults, provider)
                 self.query_one(f"#{provider}-model", Select).value = brain.model
                 self.sync_effort(provider, brain.effort)
@@ -170,16 +184,17 @@ class ModelsScreen(ModalScreen[Config | None]):
 
     @on(Button.Pressed, "#save-models")
     def save(self):
-        if len(self.catalogs) != 2 or self.errors:
+        if len(self.catalogs) != 3 or self.errors:
             return
         data = self.config.model_dump()
-        for provider in ("rb", "jb"):
+        data["routing"]["mode"] = self.query_one("#routing-mode", Select).value
+        for provider in ("mb", "rb", "jb"):
             selected = self.query_one(f"#{provider}-model", Select).value
             model = self.catalogs[provider].get(selected)
             effort = self.query_one(f"#{provider}-effort", Select).value
             if not model or effort not in (model.efforts or ("auto",)):
                 self.query_one("#model-error", Static).update(
-                    f"Choose an available {'ChatGPT' if provider == 'rb' else 'Claude'} model and supported effort."
+                    f"Choose an available {'Claude' if provider == 'jb' else 'ChatGPT'} model and supported effort."
                 )
                 return
             data[provider].update(model=selected, effort=effort)

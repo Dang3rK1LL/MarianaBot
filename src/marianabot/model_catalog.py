@@ -37,6 +37,8 @@ def parse_models(provider: str, entries: list[dict]) -> list[ModelOption]:
             default = entry.get("defaultEffortLevel", "medium")
         if not isinstance(model, str) or not re.fullmatch(r"[a-zA-Z0-9._-]{1,100}", model):
             continue
+        if not subscription_eligible(model, entry):
+            continue
         efforts = tuple(level for level in EFFORTS if level in reported)
         if reported and not efforts:
             continue
@@ -54,6 +56,20 @@ def parse_models(provider: str, entries: list[dict]) -> list[ModelOption]:
         if model not in options or entry.get("value") != "default":
             options[model] = option
     return list(options.values())
+
+
+def subscription_eligible(model: str, entry: dict | None = None) -> bool:
+    entry = entry or {}
+    return (
+        "fable" not in model.lower()
+        and not any(
+            entry.get(key) is True
+            for key in ("requiresApiKey", "requiresExtraUsage", "tokenBillingOnly")
+        )
+        and entry.get("subscriptionEligible") is not False
+        and str(entry.get("billingMode", "")).lower()
+        not in {"api", "tokens", "pay_as_you_go", "credits"}
+    )
 
 
 async def load_models(provider: str, config: Config, cwd: Path) -> list[ModelOption]:

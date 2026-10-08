@@ -54,7 +54,10 @@ Your computer orchestrates provider-hosted models; it does not host model weight
 | Store | Runs, prompts/responses, rounds, commands, events and limits |
 | CLI | Dashboard, owner mailbox, pause/resume/stop and exports |
 
-MB and RB use the configured research model; JB uses the configured judge model.
+MB has its own lightweight model. Adaptive routing selects provider-reported
+subscription models and effort by task; RB/JB preferences are ceilings. Fixed
+mode retains their exact choices. Per-call model and effort are saved in SQLite.
+See [research routing](research.md).
 Subagents are separate official-client invocations with distinct role prompts and
 contexts. The Python scheduler controls their count and concurrency; no hidden
 recursive model delegation is required. Chairs receive all specialist contributions
@@ -64,14 +67,15 @@ within the configured context bound and explain the comparison.
 
 1. MB converts the owner's problem into a research brief.
 2. RB specialists work independently on that brief and the last completed plan/review.
-3. RB compares their recommendations and writes a standalone plan.
+3. RB compares findings and writes a concise memo for the current phase.
 4. JB critics independently inspect the plan, optionally searching for contrary evidence.
 5. JB compares critiques and returns a schema-validated review.
 6. The plan, review and round number commit together in one SQLite transaction.
 7. Owner steering is handled by MB before the next round starts.
 
 Review JSON contains score, verdict, strengths, blocking issues, next_prompt,
-human_tests and dissent. Malformed output cannot advance a round. Validation errors
+online_checks, limitations, foundation_ready, scope/constraint/online-only checks
+and dissent. Legacy human_tests must be empty. Malformed output cannot advance a round. Validation errors
 and temporary client failures have a bounded retry count; subscription exhaustion
 waits for reset independently of that retry count.
 
@@ -91,15 +95,17 @@ and reuses completed summaries by content identity. Large fields are processed i
 overlapping chunks; small fields remain unchanged. A rolling checkpoint includes
 completed rounds, specialist outputs and answered owner dialogue.
 
-Current briefs, owner messages and protected notes bypass compaction. Review
-blockers, dissent and requested human tests are automatically protected; owner
-pins are explicit. Exhausting the protected context pauses the run instead of
+Original problems, owner feedback and explicit pins bypass compaction. Generated
+briefs can be summarized. Historical review auto-pins remain archived as inactive;
+the latest review supplies current issues. Exhausted summary validation uses a
+labeled original-text extract. Exhausting the protected context pauses the run instead of
 truncating protected fields. Memory is a fallible
 summary with original archives, not arbitrary retrieval or perfect recall. See
 [memory and compaction](memory.md).
 
 A separate MB mailbox task answers owner questions during research. It shares the
-RB provider semaphore, so questions wait if OpenAI capacity is occupied or exhausted.
+OpenAI quota and request-spacing controls, with its own one-call scheduling slot
+so a long RB request need not finish before a reply. Questions still wait during cooldown.
 Steering is applied only at round boundaries to avoid changing an in-flight round.
 
 ## Persistence and recovery
@@ -127,7 +133,9 @@ are not automatically restarted; create a new run from the exported plan.
 
 Sustained approval requires a configured number of qualifying reviews, a minimum
 number of rounds under the current brief revision, sufficiently high scores, and
-no blocking issues. A score plateau or needs_human verdict pauses for owner input.
+no blocking issues and a ready foundation. An online-evidence plateau with no
+further online checks completes with limitations disclosed. Legacy needs_human
+verdicts do not pause the loop.
 Round/time exhaustion marks the run complete with the specific reason, regardless
 of quality. Brief steering starts a new convergence history without erasing old work.
 

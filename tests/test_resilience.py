@@ -38,7 +38,7 @@ async def test_limit_wait_is_persistent_and_does_not_spend_transient_retries(sto
     assert [c["state"] for c in store.calls(run_id)] == ["limited", "done"]
 
 
-async def test_mb_rb_share_one_concurrency_gate(store, config):
+async def test_mb_has_one_separate_slot_while_rb_calls_remain_serial(store, config):
     run_id = store.create_run("Shared capacity", config, demo=True)
 
     class CountingClient(DemoClient):
@@ -56,9 +56,12 @@ async def test_mb_rb_share_one_concurrency_gate(store, config):
     client = CountingClient()
     engine = Engine(store, run_id, clients={"openai": client, "anthropic": DemoClient()})
     await asyncio.gather(
-        engine.call("MB", "a", "MASTER_INTAKE", {}), engine.call("RB", "b", "Research", {})
+        engine.call("MB", "a", "MASTER_INTAKE", {}),
+        engine.call("RB", "b", "Research", {}),
+        engine.call("RB", "c", "Research", {}),
     )
-    assert client.peak == 1
+    assert client.peak == 2
+    assert {row["provider"] for row in store.calls(run_id)} == {"openai"}
 
 
 async def test_duplicate_mailbox_read_does_not_duplicate_inference(store, config):

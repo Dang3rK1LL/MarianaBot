@@ -72,6 +72,8 @@ class Store:
         """)
         # Additive migration for stores created before the interactive chat.
         with self.transaction():
+            if "effort" not in {row[1] for row in self.db.execute("PRAGMA table_info(calls)")}:
+                self.db.execute("ALTER TABLE calls ADD COLUMN effort TEXT NOT NULL DEFAULT ''")
             run_columns = {row[1] for row in self.db.execute("PRAGMA table_info(runs)")}
             if "work_dir" not in run_columns:
                 self.db.execute("ALTER TABLE runs ADD COLUMN work_dir TEXT NOT NULL DEFAULT ''")
@@ -211,7 +213,8 @@ class Store:
         for key, label in (
             ("strengths", "Strengths"),
             ("blocking_issues", "Blocking issues"),
-            ("human_tests", "Tests for you"),
+            ("online_checks", "Next online checks"),
+            ("limitations", "Evidence limitations"),
             ("dissent", "Dissent"),
         ):
             if review.get(key):
@@ -278,12 +281,25 @@ class Store:
         with self.db:
             self.db.execute("UPDATE calls SET state='unknown' WHERE state='running'")
 
-    def begin_call(self, run_id: str, task: str, brain: str, provider: str, model: str) -> str:
+    def begin_call(
+        self, run_id: str, task: str, brain: str, provider: str, model: str, effort: str = ""
+    ) -> str:
         call_id = uuid.uuid4().hex
         with self.db:
             self.db.execute(
-                "INSERT INTO calls VALUES(?,?,?,?,?,?,?,?,?)",
-                (call_id, run_id, task, brain, provider, model, "running", time.time(), None),
+                "INSERT INTO calls(id,run_id,task,brain,provider,model,state,created,result,effort) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (
+                    call_id,
+                    run_id,
+                    task,
+                    brain,
+                    provider,
+                    model,
+                    "running",
+                    time.time(),
+                    None,
+                    effort,
+                ),
             )
         return call_id
 
@@ -351,7 +367,6 @@ class Store:
                 (run_id, number, revision, plan, json.dumps(review)),
             )
             self.db.execute("UPDATE runs SET round=? WHERE id=?", (number, run_id))
-            self._protect_review(run_id, number, review)
             now = time.time()
             started = self.db.execute(
                 "SELECT MIN(created) FROM events WHERE run_id=? AND kind='round_started' "
@@ -374,16 +389,32 @@ class Store:
                 },
             )
 
-    def _protect_review(self, run_id: str, number: int, review: dict):
-        for kind in ("blocking_issues", "dissent", "human_tests"):
-            for text in review.get(kind, []):
-                self._pin(run_id, kind, text, f"round {number}")
-
     def protect_reviews(self, run_id: str):
-        # Also cover research created by versions without compaction.
+        # Historical reviews remain archived in rounds. Only explicit owner pins
+        # belong in the verbatim contract; old auto-pins are retained as inactive.
         with self.db:
-            for row in self.rounds(run_id):
-                self._protect_review(run_id, row["number"], row["review"])
+            self.db.execute(
+                "UPDATE memory_pins SET active=0 WHERE run_id=? AND kind IN ('blocking_issues','dissent','human_tests')",
+                (run_id,),
+            )
+
+    def owner_feedback(self, run_id: str) -> list[dict]:
+        return [
+            {"id": command["id"], "kind": command["kind"], "text": command["text"]}
+            for command in self.commands(run_id)
+            if command["answer"] is not None
+        ]
+
+    def selected_models(self, run_id: str) -> dict:
+        result = {}
+        for row in self.db.execute(
+            "SELECT brain,model,effort,state,task FROM calls WHERE run_id=? ORDER BY created DESC",
+            (run_id,),
+        ):
+            result.setdefault(row["brain"], dict(row))
+            if len(result) == 3:
+                break
+        return result
 
     def _pin(self, run_id: str, kind: str, text: str, source: str) -> str:
         key = hashlib.sha256((run_id + kind + text).encode()).hexdigest()[:16]
@@ -509,13 +540,11 @@ class Store:
                 run_id,
                 f"answer-{command['id']}",
                 "MB",
-                "Updated brief" if command["kind"] == "steer" else "Reply",
+                "Feedback saved" if command["kind"] == "steer" else "Reply",
                 answer,
             )
             if command["kind"] == "steer":
-                self.db.execute(
-                    "UPDATE runs SET brief=?,revision=revision+1 WHERE id=?", (answer, run_id)
-                )
+                self.db.execute("UPDATE runs SET revision=revision+1 WHERE id=?", (run_id,))
 
     def get_limits(self, provider: str) -> dict:
         row = self.db.execute("SELECT data FROM limits WHERE provider=?", (provider,)).fetchone()

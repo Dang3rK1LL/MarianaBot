@@ -27,8 +27,9 @@ from marianabot.greetings import STARTUP_GREETINGS
 from marianabot.limits import SubscriptionLimits
 from marianabot.models_ui import ModelsScreen
 from marianabot.reports import export_run
+from marianabot.routing import phase_for
 from marianabot.store import Store
-from marianabot.usage_ui import UsageStrip
+from marianabot.usage_ui import UsageStrip, duration
 from marianabot.worker import WorkerManager, atomic_json
 from marianabot.workspaces_ui import WorkFolderScreen
 
@@ -78,9 +79,10 @@ Paste or type your business problem and **press Enter**. Include your objective,
 constraints, resources and what a useful result would look like. MB makes the brief;
 RB develops the plan; JB challenges it. Their replies appear here automatically.
 
-After the first message, ordinary text goes to MB. Use **/steer your instruction**
-to change the brief, including answers to MB's initial questions. Steering takes
-effect between rounds. MB shares RB's OpenAI allowance and may need to wait for it.
+After the first message, ordinary text is saved as feedback for the next round.
+Use **/ask question** for a status question without changing research. **/steer**
+also saves an instruction. Exact feedback remains available across models and memory
+summaries. Research validates online and continues without routine human review.
 
 | Command | What it does |
 |---|---|
@@ -290,19 +292,21 @@ class MarianaChat(App):
             yield Button("Models", id="models")
             yield Button("Help", id="help")
         yield Static("", id="status-line", markup=False)
-        with Vertical(id="chat-body"):
+        with Horizontal(id="workspace"):
             yield UsageStrip(id="usage-strip")
-            yield VerticalScroll(id="conversation")
-        with Vertical(id="compose-box"):
-            yield OptionList(id="suggestions", markup=False)
-            yield Composer(
-                id="composer",
-                placeholder="Describe your business problem…",
-                highlight_cursor_line=False,
-            )
-            with Horizontal(id="input-tools"):
-                yield Static("Enter send · Alt+Enter newline · / commands", id="input-hint")
-                yield Button("Send ↵", id="send")
+            with Vertical(id="chat-main"):
+                yield VerticalScroll(id="conversation")
+                with Vertical(id="compose-box"):
+                    yield OptionList(id="suggestions", markup=False)
+                    yield Composer(
+                        id="composer",
+                        placeholder="Describe your business problem…",
+                        highlight_cursor_line=False,
+                    )
+                    with Horizontal(id="input-tools"):
+                        yield Static("Enter send · Alt+Enter newline · / commands", id="input-hint")
+                        yield Button("Send ↵", id="send")
+                yield Static("", id="research-footer", markup=False)
         yield Footer()
 
     async def on_mount(self):
@@ -400,7 +404,8 @@ class MarianaChat(App):
             self.call_after_refresh(self.resize_layout)
 
     def resize_layout(self):
-        self.chat_screen.query_one("#chat-body").set_class(self.size.width >= 120, "wide")
+        self.chat_screen.query_one("#workspace").set_class(self.size.width >= 120, "wide")
+        self.chat_screen.query_one("#workspace").set_class(self.size.width < 120, "narrow")
         editor = self.chat_screen.query_one(Composer)
         maximum = 8 if self.size.height >= 32 else 5
         editor.styles.height = min(maximum, max(3, editor.wrapped_document.height + 2))
@@ -448,7 +453,7 @@ class MarianaChat(App):
         self.run_id, self.demo = run_id, bool(run["demo"])
         self.chat_screen.query_one(
             Composer
-        ).placeholder = "Ask MB about this research, or /steer to change direction…"
+        ).placeholder = "Feedback for the next round · /ask for a question…"
         self.last_message, self.last_status = 0, None
         self.awaiting_reply = False
         self.store.seed_chat(run_id)
@@ -476,6 +481,7 @@ class MarianaChat(App):
     def save_draft(self, force=False):
         if (
             not self.is_mounted
+            or not hasattr(self, "chat_screen")
             or not self.chat_screen.query(Composer)
             or (not self.dirty and not force)
         ):
@@ -556,7 +562,12 @@ class MarianaChat(App):
             elif not self.run_id:
                 await self.start_problem(text)
             else:
-                await self.send_message("ask", text)
+                kind = (
+                    "ask"
+                    if self.store.run(self.run_id)["status"] in ("complete", "stopped")
+                    else "steer"
+                )
+                await self.send_message(kind, text)
         except (ValueError, OSError) as exc:
             if not editor.text:
                 editor.load_text(original)
@@ -600,7 +611,7 @@ class MarianaChat(App):
         await self.open_run(run_id)
         await self.note(
             f"Research started · {run_id}",
-            "MB is preparing your brief. Replies will appear here as each stage finishes. You can keep writing; use **/steer** to change direction or **/pause** to take a break.\n\n"
+            "MB is preparing a short brief. RB and JB will research online and continue autonomously. Ordinary messages are saved as feedback for the next round; use **/ask** for questions or **/pause** to take a break.\n\n"
             + "Research files: "
             + self.store.run(run_id)["work_dir"],
         )
@@ -624,7 +635,7 @@ class MarianaChat(App):
         if kind == "steer":
             await self.note(
                 "Steering queued",
-                "MB will update the brief before the next round."
+                "Your exact instruction is saved and will apply before the next round."
                 + (" Research is paused; use **/resume** when ready." if not active else ""),
             )
         else:
@@ -684,9 +695,13 @@ class MarianaChat(App):
                     f"**{p['id']} · {p['kind']} · {p['source']}**\n\n{p['text']}"
                     for p in self.store.pins(self.run_id)
                 )
+                feedback = "\n\n".join(
+                    f"**{item['kind']} #{item['id']}**\n\n{item['text']}"
+                    for item in self.store.owner_feedback(self.run_id)
+                )
                 await self.note(
                     "Research memory",
-                    f"Through round {memory['through_round']}. The current brief and protected notes remain verbatim.\n\n{memory['text'] or 'No completed research has entered memory yet.'}\n\n### Protected notes\n\n{notes or 'No additional notes yet.'}\n\nUse **/pin instruction** to preserve exact wording, or **/unpin ID** to release an obsolete note. Full originals remain in exports.",
+                    f"Through round {memory['through_round']}. The original objective, answered owner feedback and explicit pins remain verbatim.\n\n{memory['text'] or 'No completed research has entered memory yet.'}\n\n### Owner feedback ledger\n\n{feedback or 'No answered feedback yet.'}\n\n### Protected notes\n\n{notes or 'No additional notes yet.'}\n\nUse **/pin instruction** to preserve exact wording, or **/unpin ID** to release an obsolete note. Full originals remain in exports.",
                 )
             elif name == "/pin":
                 key = self.store.pin(self.run_id, argument)
@@ -868,8 +883,10 @@ class MarianaChat(App):
                 else ""
                 for provider in self.usage_errors
             },
+            selections=self.store.selected_models(usage_run) if usage_run else {},
+            run=self.store.run(usage_run) if usage_run else None,
+            memory=self.store.memory(usage_run) if usage_run else None,
         )
-        mode = "Offline demo" if self.demo else "Subscriptions"
         status = "New conversation"
         if self.run_id:
             run = self.store.run(self.run_id)
@@ -930,7 +947,20 @@ class MarianaChat(App):
         else:
             if active:
                 status += " · another session working · /sessions"
-        self.chat_screen.query_one("#status-line", Static).update(f"{status} · {mode}")
+        self.chat_screen.query_one("#status-line", Static).update(status)
+        if self.run_id:
+            run = self.store.run(self.run_id)
+            run_config = Config.model_validate_json(run["config"])
+            phase = phase_for(self.store.rounds(self.run_id), run["revision"])
+            footer = f"{phase.capitalize()} · online only · elapsed {duration(time.time() - run['created'])} · round {run['round']} / {run_config.research.max_rounds}"
+            footer += "\nFeedback applies next round · /ask question · /pause · /resume · /export"
+        else:
+            footer = "Online research · foundation → validation → decision\nEnter your objective and constraints to begin"
+        self.chat_screen.query_one("#research-footer", Static).update(footer)
+
+    @on(Button.Pressed, "#refresh-usage")
+    def refresh_usage_button(self):
+        self.request_usage_refresh()
 
     async def ensure_reply(self):
         try:
@@ -1009,7 +1039,7 @@ class MarianaChat(App):
         self.exiting = True
         if self.usage_worker is not None:
             self.usage_worker.cancel()
-        if self.chat_screen.query(Composer):
+        if hasattr(self, "chat_screen") and self.chat_screen.query(Composer):
             self.save_draft(force=True)
         self.store.close()
 

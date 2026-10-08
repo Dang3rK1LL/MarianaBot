@@ -34,6 +34,8 @@ def make_review(**changes):
             blocking_issues=["No paid customer commitments"],
             strengths=["Pilot costs now have an explicit ceiling"],
             human_tests=["Ask three buyers to commit to the pilot"],
+            online_checks=["Compare published competitor prices"],
+            limitations=["Public reviews cannot establish willingness to pay"],
             dissent=["An interview is weaker evidence than a paid commitment"],
         )
         | changes
@@ -52,7 +54,7 @@ def test_recap_handles_plans_without_stage_summaries():
     assert "@everyone" not in text
 
 
-def test_recap_reports_actual_changes_review_delta_and_owner_tests():
+def test_recap_reports_actual_changes_online_checks_and_evidence_limits():
     plan = "## Round summary\nCompared two buyer segments.\n## Changes this round\nReduced the pilot from 20 customers to five.\n## Next direction\nCollect paid commitments.\n## Plan\nPrivate extended detail."
     embed = recap_card(
         make_run(),
@@ -64,7 +66,9 @@ def test_recap_reports_actual_changes_review_delta_and_owner_tests():
     assert "+7 since previous round" in text
     assert "Reduced the pilot from 20 customers to five" in text
     assert "No paid customer commitments" in text
-    assert "Needs your input" in text and "Ask three buyers" in text
+    assert "Next online checks" in text and "Compare published competitor prices" in text
+    assert "Evidence limitations" in text and "cannot establish willingness to pay" in text
+    assert "Needs your input" not in text and "Ask three buyers" not in text
     assert "Disagreements retained" in text
     assert "Private extended detail" not in text
 

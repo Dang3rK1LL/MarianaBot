@@ -11,8 +11,8 @@ from pydantic import Field, ValidationError
 from marianabot.clients import ClientError
 from marianabot.config import StrictModel
 
-VERSION = "memory-v1"
-PROTECTED = {"brief", "owner_problem", "owner_message", "protected_notes"}
+VERSION = "memory-v2"
+PROTECTED = {"problem", "owner_problem", "owner_message", "owner_feedback", "protected_notes"}
 
 
 def encoded(value) -> str:
@@ -100,7 +100,23 @@ class Compactor:
         if len(text) <= target:
             return text
         async with self.lock:
-            return await self._compact(text, target, label)
+            try:
+                return await self._compact(text, target, label)
+            except SummaryValidationError:
+                # The original and rejected responses are already archived. A
+                # clearly labeled extract lets research continue after bad summaries.
+                summary = extractive_summary(text, target)
+                key = hashlib.sha256(
+                    encoded([VERSION, self.run_id, text, target]).encode()
+                ).hexdigest()
+                with self.store.db:
+                    self.store.db.execute(
+                        "UPDATE compactions SET summary=? WHERE id=?", (summary, key)
+                    )
+                self.engine.emit(
+                    f"Memory fallback · {label} · bounded extract; full source archived"
+                )
+                return summary
 
     async def _compact(self, text: str, target: int, label: str, repair_depth: int = 0) -> str:
         self.engine.check()
@@ -129,9 +145,7 @@ class Compactor:
                 )
             combined = "\n\n".join(pieces)
             if len(combined) >= len(text):
-                raise ClientError(
-                    "Memory compaction did not reduce the source. Originals are saved; use /resume to retry."
-                )
+                raise SummaryValidationError("Memory compaction did not reduce the source")
             summary = (
                 await self._compact(combined, target, label + " · merge")
                 if len(combined) > target
@@ -202,12 +216,12 @@ class Compactor:
         self, candidate: str, source: str, target: int, label: str, repair_depth: int
     ) -> str:
         if repair_depth >= self.engine.config.research.max_retries:
-            raise ClientError(
+            raise SummaryValidationError(
                 f"Memory compaction failed validation: summary exceeds the {target:,}-character "
                 f"target ({len(candidate):,} characters); size repair limit reached; originals retained"
             )
         if len(candidate) >= len(source) * 0.9:
-            raise ClientError(
+            raise SummaryValidationError(
                 "Memory compaction made insufficient size progress; originals and candidates "
                 "retained. Research paused instead of repeating the same source."
             )
@@ -258,10 +272,16 @@ class Compactor:
                 )
                 material = [f"Round {number}, brief revision {row['revision']}", encoded(row)]
                 for call in calls:
+                    if call["task"].endswith(("-synthesis", "-verdict")):
+                        continue  # The saved round already contains both chair outputs.
                     result = json.loads(call["result"])
                     material.append(f"{call['brain']} / {call['task']}\n{result['text']}")
                 text = memory["text"] + "\n\n" + "\n\n".join(material)
-                text = await self.compact(text, self.limit // 4, f"research through round {number}")
+                text = await self.compact(
+                    text,
+                    min(self.limit // 4, self.engine.config.research.memory_chars),
+                    f"research through round {number}",
+                )
                 self.store.save_memory(self.run_id, number, text)
                 memory = self.store.memory(self.run_id)
             for command in self.store.commands(self.run_id):
@@ -272,7 +292,9 @@ class Compactor:
                     + f"\n\nOwner {command['kind']} #{command['id']}: {command['text']}\nMB answer: {command['answer']}"
                 )
                 text = await self.compact(
-                    text, self.limit // 4, f"owner conversation #{command['id']}"
+                    text,
+                    min(self.limit // 4, self.engine.config.research.memory_chars),
+                    f"owner conversation #{command['id']}",
                 )
                 self.store.save_memory(
                     self.run_id, memory["through_round"], text, memory["commands"] + [command["id"]]
@@ -280,11 +302,46 @@ class Compactor:
                 memory = self.store.memory(self.run_id)
 
     def context(self) -> dict:
+        history = self.store.rounds(self.run_id)
         pins = [
             {"id": p["id"], "kind": p["kind"], "source": p["source"], "text": p["text"]}
             for p in self.store.pins(self.run_id)
+            if p["kind"] == "owner"
         ]
         return {
             "research_memory": self.store.memory(self.run_id)["text"],
             "protected_notes": pins,
+            "owner_feedback": self.store.owner_feedback(self.run_id),
+            "current_issues": {
+                key: history[-1]["review"].get(key, [])
+                for key in ("blocking_issues", "dissent", "online_checks", "limitations")
+            }
+            if history
+            else {},
         }
+
+
+def extractive_summary(text: str, target: int) -> str:
+    """Copy bounded original passages; disclose omissions instead of inventing a digest."""
+    header = "Partial archive extract; omissions remain in the full saved source.\n"
+    remaining = max(0, target - len(header))
+    passages = re.split(r"\n+|(?<=[.!?])\s+(?=[A-Z0-9])", text)
+    indexed = [(i, passage.strip()) for i, passage in enumerate(passages) if passage.strip()]
+    priority = re.compile(
+        r"https?://|\d|evidence|constraint|decision|unknown|unverified|contradict|reject|dissent|limitation",
+        re.I,
+    )
+    selected = []
+    for index, passage in sorted(
+        indexed, key=lambda item: (not bool(priority.search(item[1])), item[0])
+    ):
+        if len(passage) + 1 <= remaining:
+            selected.append((index, passage))
+            remaining -= len(passage) + 1
+    if not selected and indexed:
+        # A single enormous line cannot be preserved in a bounded summary. Keep
+        # complete words and avoid a cut through a URL; the archive keeps all bytes.
+        passage = indexed[0][1][:remaining].rsplit(" ", 1)[0]
+        passage = re.sub(r"https?://\S*$", "", passage)
+        selected.append((0, passage))
+    return (header + "\n".join(passage for _, passage in sorted(selected)))[:target]

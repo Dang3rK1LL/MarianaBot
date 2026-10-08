@@ -12,22 +12,26 @@ from marianabot.clients import (
     DemoClient,
     NativeClient,
     claude_account,
+    claude_models,
 )
 from marianabot.config import Config
 from marianabot.limits import SubscriptionLimits
 from marianabot.memory import Compactor, SummaryTooLong, SummaryValidationError, size
+from marianabot.model_catalog import parse_models
 from marianabot.prompts import (
     JB_ROLES,
     JUDGE,
     MASTER_ANSWER,
     MASTER_INTAKE,
     MASTER_STEER,
+    PHASES,
     RB_ROLES,
     SYNTHESIZE,
     Review,
     prompt,
 )
 from marianabot.reports import export_run
+from marianabot.routing import TaskRouter, phase_for
 from marianabot.store import Store
 
 
@@ -42,8 +46,6 @@ def stop_reason(rounds: list[dict], config: Config) -> str | None:
         return None
     current = rounds[-1]
     review = current["review"]
-    if review["verdict"] == "needs_human":
-        return "Human evidence is required; review the requested experiments"
     same_revision = [r for r in rounds if r["revision"] == current["revision"]]
     cfg = config.research
     if len(same_revision) < cfg.min_rounds:
@@ -51,19 +53,24 @@ def stop_reason(rounds: list[dict], config: Config) -> str | None:
     streak = same_revision[-cfg.approval_streak :]
     if len(streak) == cfg.approval_streak and all(
         r["review"]["verdict"] == "approve"
+        and r["review"].get("foundation_ready", False)
+        and all(
+            r["review"].get(key, True)
+            for key in ("scope_aligned", "owner_constraints_preserved", "online_only")
+        )
         and not r["review"]["blocking_issues"]
         and r["review"]["score"] >= cfg.quality_threshold
         for r in streak
     ):
-        return "Sustained reviewer approval; real-world validation still applies"
+        return "Online research conclusion supported across reviews; remaining limitations are disclosed"
     recent = same_revision[-cfg.plateau_rounds :]
     if (
         len(recent) == cfg.plateau_rounds
+        and review.get("foundation_ready", False)
+        and not review.get("online_checks")
         and max(r["review"]["score"] for r in recent[1:]) <= recent[0]["review"]["score"]
     ):
-        return (
-            "Reviewer score has plateaued; further iteration needs a changed brief or new evidence"
-        )
+        return "Available online evidence has stopped changing the conclusion; remaining gaps are disclosed"
     return None
 
 
@@ -81,6 +88,8 @@ class Engine:
         self.mailbox_lock = asyncio.Lock()
         self.account_lock = asyncio.Lock()
         self.claude_account_lock = asyncio.Lock()
+        self.mb_gate = asyncio.Semaphore(1)
+        self.router = TaskRouter(self.config)
         self.gates = {
             provider: asyncio.Semaphore(brain.concurrency)
             for provider, brain in (("openai", self.config.rb), ("anthropic", self.config.jb))
@@ -167,7 +176,16 @@ class Engine:
                 "paused",
                 f"Codex does not list requested model {self.config.rb.model}; no substitute selected",
             )
+        self.router.set_catalog("rb", parse_models("rb", account["model_details"]))
         await claude_account(self.config, self.account.cwd)
+        self.router.set_catalog(
+            "jb", parse_models("jb", await claude_models(self.config, self.account.cwd))
+        )
+        if self.config.jb.model not in self.router.catalogs["jb"]:
+            raise Halt(
+                "paused",
+                "Selected Claude ceiling is unavailable or excluded from subscription research",
+            )
         with contextlib.suppress(ClientError, OSError, ValueError):
             await self.refresh_claude_account()
         self.emit(
@@ -246,31 +264,100 @@ class Engine:
         if cached:
             return cached
         provider = "anthropic" if brain == "JB" else "openai"
-        model = self.config.jb.model if brain == "JB" else self.config.rb.model
         actual_search = search and self.config.research.web_search
-        max_chars = self.config.research.max_context_chars
+        max_chars = (
+            self.config.research.max_context_chars
+            if internal_compaction
+            else min(self.config.research.max_context_chars, 24000)
+        )
         if task == "mb-intake":
             max_chars = max(max_chars, size(data) + 1000)
-        elif task.startswith("mb-command-"):
-            max_chars = max(max_chars, len(data["owner_message"]) * len(data) + 1000)
         if not internal_compaction:
             if task != "mb-intake":
                 data = data | self.memory.context()
+            protected = {
+                key: value
+                for key, value in data.items()
+                if key
+                in {
+                    "problem",
+                    "owner_problem",
+                    "owner_message",
+                    "owner_feedback",
+                    "protected_notes",
+                }
+            }
+            if task != "mb-intake":
+                max_chars = min(
+                    self.config.research.max_context_chars, max(max_chars, size(protected) + 4096)
+                )
             data = await self.memory.prepare(data, max_chars)
+        history = self.store.rounds(self.run_id)
+        revision = self.store.run(self.run_id)["revision"]
+        phase = phase_for(history, revision)
+        current = [row for row in history if row["revision"] == revision]
+        difficult = bool(current and current[-1]["review"].get("score", 100) < 55)
+        if len(current) >= 2 and current[-1]["review"].get("blocking_issues"):
+            difficult |= current[-1]["review"].get("score", 100) <= current[-2]["review"].get(
+                "score", 0
+            )
+        words = min(
+            self.config.research.max_response_words,
+            250 if brain == "MB" else 450 if "-rb-" in task or "-jb-" in task else 700,
+        )
+        if not internal_compaction:
+            instruction += f"\nCurrent phase: {phase}. {PHASES[phase]}\nRESPONSE_BUDGET: at most {words} words. Return only the concise requested result."
         content = prompt(instruction, data, max_chars, actual_search)
         request_content = content
         attempt = 0
+        quality_retry = 0
         while True:
-            async with self.gates[provider]:
+            try:
+                selection = self.router.select(
+                    brain, task, phase=phase, difficult=difficult, retry=quality_retry
+                )
+            except ValueError as exc:
+                raise Halt("paused", str(exc)) from exc
+            gate = (
+                self.mb_gate if brain == "MB" and not internal_compaction else self.gates[provider]
+            )
+            async with gate:
                 await self.capacity(provider)
                 self.check()
-                call_id = self.store.begin_call(self.run_id, task, brain, provider, model)
+                call_id = self.store.begin_call(
+                    self.run_id, task, brain, provider, selection.model, selection.effort
+                )
+                self.emit(
+                    f"{brain} · {selection.model} / {selection.effort} · {selection.reason}",
+                    kind="model_selected",
+                    payload={
+                        "brain": brain,
+                        "model": selection.model,
+                        "effort": selection.effort,
+                        "reason": selection.reason,
+                        "task": task,
+                    },
+                )
                 self.emit(f"{brain} · {task} · working")
                 call_content = request_content
                 result = None
+                request_started = time.monotonic()
                 try:
                     client = self.clients[provider]
                     if isinstance(client, NativeClient):
+                        request_config = self.config.model_copy(deep=True)
+                        selected_brain = request_config.jb if brain == "JB" else request_config.rb
+                        selected_brain.model, selected_brain.effort = (
+                            selection.model,
+                            selection.effort,
+                        )
+                        if brain == "MB" and not internal_compaction:
+                            request_config.research.request_timeout_seconds = min(
+                                120, request_config.research.request_timeout_seconds
+                            )
+                        client = NativeClient(
+                            provider, request_config, client.cwd, self.limits[provider]
+                        )
                         result = await client.complete(
                             call_content,
                             actual_search,
@@ -280,11 +367,19 @@ class Engine:
                         )
                     else:
                         result = await client.complete(call_content, actual_search)
+                    result["elapsed_seconds"] = time.monotonic() - request_started
+                    result["selection_reason"] = selection.reason
+                    if not internal_compaction and (
+                        len(result["text"].split()) > words or len(result["text"]) > words * 14
+                    ):
+                        raise ValueError("Response exceeds the concise output budget")
                     if structured:
                         raw = result["text"].strip()
                         if raw.startswith(chr(96) * 3):
                             raw = "\n".join(raw.splitlines()[1:-1])
                         result["review"] = Review.model_validate_json(raw).model_dump()
+                        if result["review"]["verdict"] == "needs_human":
+                            result["review"]["verdict"] = "revise"
                     if validate:
                         validate(result)
                     result["prompt"] = call_content
@@ -292,6 +387,7 @@ class Engine:
                     self.emit(f"{brain} · {task} · saved")
                     return result
                 except (ValidationError, ValueError) as exc:
+                    quality_retry += 1
                     message = (
                         "Memory compaction failed validation; originals retained"
                         if internal_compaction
@@ -308,6 +404,16 @@ class Engine:
                             data,
                             max_chars,
                             actual_search,
+                        )
+                    elif not internal_compaction:
+                        message = (
+                            str(exc)
+                            if not isinstance(exc, ValidationError)
+                            else "Output failed the requested review schema"
+                        )
+                        request_content = (
+                            content
+                            + f"\nOUTPUT_RETRY: {message}. Return a corrected result within {words} words. Follow the exact schema where requested; human_tests must be empty. Do not ask the owner to perform validation."
                         )
                     rejected = dict(result or {}) | {
                         "prompt": call_content,
@@ -344,6 +450,8 @@ class Engine:
                 await self.wait(self.limits[provider].remaining(), str(error))
                 continue
             if not error.retryable or attempt >= self.config.research.max_retries:
+                if internal_compaction and error.retryable:
+                    raise SummaryValidationError(str(error))
                 raise Halt("paused", str(error))
             attempt += 1
             await self.wait(min(120, 2**attempt * 3) + random.random(), str(error))
@@ -370,18 +478,28 @@ class Engine:
             history = self.store.rounds(self.run_id)
             data = {
                 "problem": run["problem"],
-                "brief": run["brief"],
-                "latest_round": history[-1] if history else "No completed round yet",
                 "owner_message": command["text"],
                 "conversation": self.store.recent_dialogue(self.run_id),
             }
+            if not steering:
+                last = history[-1] if history else None
+                data["latest_round"] = (
+                    {
+                        "number": last["number"],
+                        "review": last["review"],
+                        "plan_excerpt": last["plan"][:3000],
+                        "excerpt_notice": "An excerpt only; the complete plan is saved in the run archive.",
+                    }
+                    if last
+                    else "No completed round yet"
+                )
             instruction = MASTER_STEER if steering else MASTER_ANSWER
             answer = await self.call("MB", f"mb-command-{command['id']}", instruction, data)
             self.store.answer(self.run_id, command, answer["text"])
             await self.memory.advance()
             self.emit(
                 f"MB answered {command['kind']} #{command['id']}"
-                + ("; brief updated for next round" if steering else "")
+                + ("; owner instruction saved for next round" if steering else "")
             )
 
     async def mailbox(self):
@@ -410,15 +528,13 @@ class Engine:
             if history and history[-1]["revision"] == run["revision"]:
                 reason = stop_reason(history, self.config)
                 if reason:
-                    paused = (
-                        history[-1]["review"]["verdict"] == "needs_human" or "plateaued" in reason
-                    )
-                    raise Halt("paused" if paused else "complete", reason)
+                    raise Halt("complete", reason)
             number = run["round"] + 1
             if number > self.config.research.max_rounds:
                 raise Halt("complete", "Configured round limit reached")
             prefix = f"round-{number}-revision-{run['revision']}"
             previous = history[-1] if history else {}
+            phase = phase_for(history, run["revision"])
             self.emit(
                 f"Round {number}/{self.config.research.max_rounds} · RB court",
                 kind="round_started",
@@ -429,6 +545,7 @@ class Engine:
                     "focus": previous.get("review", {}).get("next_prompt") or run["problem"],
                     "previous_review": previous.get("review", {}),
                     "roles": [RB_ROLES[i % len(RB_ROLES)] for i in range(self.config.rb.agents)],
+                    "phase": phase,
                 },
             )
             data = {
@@ -436,6 +553,7 @@ class Engine:
                 "brief": run["brief"],
                 "previous_plan": previous.get("plan", "First iteration"),
                 "previous_review": previous.get("review", "No previous review"),
+                "phase": phase,
             }
             researchers = await self.group(
                 [
@@ -443,7 +561,7 @@ class Engine:
                         "RB",
                         f"{prefix}-rb-{i}",
                         RB_ROLES[i % len(RB_ROLES)]
-                        + f"\nIndependent proposal {i + 1}. Develop your own recommendation, assumptions, evidence and tests.",
+                        + f"\nIndependent proposal {i + 1}. Investigate only the core question relevant to your role in this phase. Give a short conclusion, cited online evidence, at most three material unknowns and the next online check.",
                         data,
                         search=True,
                     )
@@ -482,6 +600,7 @@ class Engine:
                 "brief": run["brief"],
                 "plan": synthesis["text"],
                 "previous_review": previous.get("review", {}),
+                "phase": phase,
             }
             critics = await self.group(
                 [
@@ -489,7 +608,7 @@ class Engine:
                         "JB",
                         f"{prefix}-jb-{i}",
                         JB_ROLES[i % len(JB_ROLES)]
-                        + f"\nIndependent critique {i + 1}. Attack this plan with specific evidence and falsifiable objections.",
+                        + f"\nIndependent critique {i + 1}. Check scope, owner constraints and current-phase evidence. Identify at most three decision-changing objections with online checks. Avoid speculative risk lists and requests for human experiments.",
                         judging,
                         search=True,
                     )

@@ -44,9 +44,11 @@ python3 -m venv .venv
 ```
 
 The setup wizard asks for model IDs and effort levels. Press Enter to keep the
-defaults: **GPT-6 Astra / high** for research and coordination, and
-**Claude Opus 5.5 / medium** for critique. Medium follows Anthropic's current
-[Opus 5.5 guidance](https://code.claude.com/docs/en/model-config).
+defaults: **GPT-6 Luna / low** for coordination, **GPT-6 Astra / high** as the
+research ceiling, and **Claude Opus 5.5 / medium** as the review ceiling.
+Adaptive routing uses available Sol and Sonnet models for routine work and
+reserves the configured ceilings for difficult decisions. `/models` also offers
+fixed research models. Fable and reported token-billing-only models are excluded.
 You can enter future model IDs without waiting for a MarianaBot update.
 Your provider must support the model and effort you choose.
 
@@ -81,21 +83,26 @@ The shared SQLite history still lets chat and Discord find all your sessions.
 
 | Component | What it does |
 |---|---|
-| Master brain (MB) | Prepares the brief, answers you and applies steering; shares the research model and allowance |
+| Master brain (MB) | Prepares the brief, answers you and applies steering; uses its own lightweight model and shares ChatGPT allowance |
 | Research brain (RB) | Three independent specialists propose approaches; a chair compares them and writes the plan |
 | Judging brain (JB) | Three independent critics challenge the plan; a chair combines objections into the next research prompt |
 
-The teams alternate until a configured limit, qualified approval, a score plateau
-or a need for human evidence. Defaults are 24 rounds and 72 elapsed hours.
+Research progresses through **foundation ? online validation ? decision**.
+JB must establish the foundation before detailed work begins. The teams continue
+until supported approval, exhausted useful online evidence or a configured limit. Defaults are 24 rounds and 72 elapsed hours.
 Specialists run one at a time by default; count and concurrency are configurable.
 More rounds and higher reviewer scores do not establish that a business will work.
-The output includes uncertainties and tests you can carry out in the real world.
+Responses are concise decision memos. Validation uses public online evidence;
+interviews, outreach and in-person tests are excluded. Missing private evidence
+is disclosed as a limitation rather than a routine request for human intervention.
 
-Type normally to ask MB a question. Type `/` to see commands:
+Ordinary messages save feedback for the next round. Use `/ask` for questions
+without changing research. Type `/` to see commands:
 
 | Command | Action |
 |---|---|
-| `/steer Focus on a pilot below EUR 500.` | Changes the brief at the next round boundary |
+| `/steer Keep Hungary and the EUR 500 budget.` | Saves an instruction for the next round |
+| `/ask What has been established?` | Asks MB without changing research |
 | `/pause` / `/resume` | Pauses or continues from saved checkpoints |
 | `/stop` | Permanently ends this research run |
 | `/sessions` / `/new` | Opens saved research or starts a new draft |
@@ -106,7 +113,8 @@ Type normally to ask MB a question. Type `/` to see commands:
 | `/quit` | Closes chat while background research continues |
 
 `/models` lists models reported by your signed-in Codex and Claude clients.
-The effort menu follows the selected model; models without adjustable effort use
+MB has a separate selection. In adaptive mode RB/JB settings are ceilings;
+the sidebar shows actual per-call selections. The effort menu follows the selected model; models without adjustable effort use
 their default. Loading the lists does not generate model responses. Preferences
 apply to new research, while existing runs keep their saved settings.
 
@@ -120,8 +128,9 @@ stays paused. See the [daily-use guide](docs/laptop.md) and
 
 ## Usage and memory
 
-ChatGPT and Claude usage stay in the fixed info panel: reported input/output
-tokens, active calls, account allowance and reset times when provided. Missing
+Fullscreen chat has a fixed sidebar with research status, elapsed time, model
+selections, run/cache tokens, calls, all reported allowance windows and reset
+times. A Refresh button updates limits; the footer shows phase and controls. Missing
 values stay unknown; incomplete totals are marked partial. This is provider
 telemetry, not a guaranteed live balance. Other apps share your allowance.
 
@@ -130,11 +139,12 @@ It uses reported reset times where available and a conservative retry interval
 otherwise. It does not purchase credits or switch to API billing.
 See [usage reporting](docs/usage.md) for what each provider exposes.
 
-Older research is automatically summarized through MB. The current brief,
-protected notes, blockers and dissent are retained; original material and
-compaction records remain on disk. Summaries can lose nuance, so pin anything
-that must keep its exact wording. If protected material cannot fit, research
-pauses. The [memory guide](docs/memory.md) explains the working context budget.
+Older research is summarized through MB. Original problems, answered owner
+feedback and explicit pins remain verbatim across models. The current review
+supplies the active issue list; historical reviews stay archived. Bad summaries
+have bounded retries and a labeled extract fallback. If the owner contract itself
+cannot fit, the worker preserves it and pauses. See the [research workflow](docs/research.md)
+and [memory guide](docs/memory.md).
 
 ## Your data and your server
 

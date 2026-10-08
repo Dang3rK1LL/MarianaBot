@@ -6,14 +6,16 @@ combines MB and RB; Claude shows JB. Counts belong to the active MarianaBot run.
 you open a different conversation while a worker is running, the strip names that
 working run. Saved runs retain their totals after restart.
 
-The model row shows the RB/MB and JB models and reasoning efforts for that run.
-In a new conversation, it shows your saved choices for new research. Changes in
+The fullscreen sidebar uses the available height independently of the composer.
+It shows status, elapsed time, routing ceilings, actual current/last MB/RB/JB
+selections, run/cache tokens, calls and memory. The footer shows phase, round
+budget and controls. New conversations show saved preferences. Changes in
 `/models` appear automatically; existing research retains its saved configuration.
 
 `in` means reported input tokens, including cached input; `out` means reported
-output. Allowance percentages mean **used**. The two windows with highest reported
-usage are shown, with 5h before 7d, followed by the nearest reported reset or
-current cooldown and snapshot age. Hover for cache details or additional windows; `/usage` refreshes and
+output. Allowance percentages mean **used**. Fullscreen displays every reported
+window with 5h before 7d, individual resets, cooldown and snapshot age. Narrow
+terminals use compact rows. The sidebar Refresh button updates limits; `/usage` refreshes and
 lists the full quota snapshot. Unknown values remain unknown; expired snapshots say refresh
 due instead of pretending the allowance reset. Other apps affect account allowance
 but do not contribute to MarianaBot's run token totals.

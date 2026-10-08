@@ -1,82 +1,64 @@
 # Research memory and compaction
 
-Each model request starts a fresh conversation. MarianaBot supplies the current
-brief, relevant current work, a working research memory and protected notes. It
-does not rely on either CLI retaining a multi-day conversation behind the scenes.
+Each request is a fresh client conversation with the original problem, owner
+feedback, explicit pins, current work and rolling memory. It does not depend on
+a particular model remembering a previous session.
 
-After completed rounds, memory incorporates the plan, review and all completed
-specialist/chair outputs. Answered owner messages enter the same memory, including
-when questions and steering finish out of order. Short material stays unchanged.
-MB summarizes larger material, prioritizing evidence, decisions and their reasons,
-numbers and dates, source URLs, uncertainty, rejected options and open questions.
-The prompt explicitly preserves contrary findings rather than favoring the plan.
+## Owner contract
 
-The working memory targets one quarter of `research.max_context_chars` (15,000
-characters by default). Oversized inputs to an individual research or synthesis
-request are also compacted. Long sources are processed in overlapping chunks and
-merged, so the compactor receives the whole source instead of only its beginning.
-This is a character budget for evidence, not an exact provider token-window meter;
-client instructions, tools and reasoning have their own overhead.
+Original problems, current owner messages, answered feedback and explicit `/pin`
+notes stay verbatim. MB acknowledgments cannot replace them. Ordinary chat messages
+on an open run are feedback; `/ask` is for questions. Questions remain context,
+not automatically constraints. Later explicit changes supersede conflicting
+older instructions. Steering applies at round boundaries.
 
-## What remains verbatim
+Generated briefs and plans can be summarized. Historical blockers, dissent and
+requested experiments are not permanently pinned. The latest review supplies
+active issues; every earlier review remains saved. Existing automatic pins are
+retained as inactive records. Explicit owner pins remain active until `/unpin ID`,
+which keeps their archived record.
 
-- The current research brief and the current owner message.
-- Explicit `/pin` instructions.
-- Recorded review blockers, dissent and requested human tests, deduplicated by
-  exact text and category. These are historical concerns to assess against current
-  evidence, not a claim that every past objection is still valid.
+The initial problem limit is 100,000 characters. Its original is preserved.
+If the owner contract cannot fit the configured context, the worker pauses with
+all text intact. Reconfigure the context bound or release obsolete explicit pins.
+No finite context offers unlimited verbatim instructions or perfect recall.
 
-The first problem reaches MB intake in full within the supported 100,000-character
-input limit. Later requests can summarize that original problem; the current brief
-stays intact. Use `/pin` for critical original wording that must survive even if MB's
-brief failed to capture it. Conflicting owner instructions should be surfaced.
+## Working memory
 
-The model cannot remove protected notes. `/memory` shows note IDs; `/unpin ID`
-releases one from future verbatim context, keeping its archived record. A released
-note is not automatically reactivated by loading older reviews. `/pin` records an
-instruction; use `/steer` as well when changing the research direction.
+Completed rounds and specialist findings enter rolling memory. Chair outputs
+are included once through the saved round. Answered dialogue enters memory even
+when responses finish out of order; exact owner wording also stays in the ledger.
 
-If protected text consumes the available context, the run pauses with guidance to
-review obsolete pins or increase the context budget when explicitly reconfiguring
-the paused run. It does not silently shorten protected text.
+`research.memory_chars` defaults to 8,000, capped at one quarter of the configured
+context bound. Ordinary calls target at most 24,000 evidence characters, with
+space up to `research.max_context_chars` when needed by the owner contract.
+These are character budgets, not exact provider token-window meters. Concise
+output budgets reduce growth before compaction becomes necessary.
 
-## Durability and usage
+Sources are archived before summarization. Content-based identities reuse saved
+summaries across agents and restarts. Long sources use overlapping chunks. MB
+preserves decision-critical facts, uncertainty, numbers, dates, source URLs,
+contradictions and reasons for rejecting alternatives.
 
-Original text is archived before compaction. Summaries have stable content-based
-identities and are reused across parallel agents and restarts. The memory checkpoint
-advances only after the necessary summary succeeds. Invalid JSON, mismatched source
-IDs, empty summaries and newly invented source URLs fail validation; bounded
-retries and pause behavior use the ordinary worker controls. Size targets leave
-headroom below the hard evidence limit, with a smaller suggested word budget.
-An otherwise valid oversized summary is archived and summarized again instead of
-repeatedly regenerating the original source. Resume reuses the shortest saved
-candidate after rechecking its source ID, content and URLs. These candidates remain
-invalid call records until a bounded replacement is available; only the finished
-replacement can become a memory checkpoint. Size repair must reduce the source
-by more than 10% per step and is bounded by `research.max_retries`; failure to make
-progress pauses the run with its originals and candidates intact.
-Rejected responses, their prompts and validation reasons remain in the private
-call history. Compaction retries receive the failed check so they can correct it;
-valid JSON inside a single Markdown code fence is accepted. The same source,
-length and URL checks still apply. Rejected responses are never used as memory
-or included in the exported citation index. Oversized candidates may be supplied
-only to another compaction call, not directly to research or review agents.
+## Recovery
 
-Compaction uses the selected MB/RB model and effort, shares their concurrency and
-quota gate, and contributes to the ChatGPT usage row. `/pause` can cancel it. There
-is no additional provider account or API billing route. Already completed research
-and summaries are reused after resume. New worker processes use compaction on
-existing runs too, rebuilding memory from saved checkpoints as needed.
+Invalid JSON, mismatched source IDs, blank summaries and invented URLs fail
+validation. Bounded retries include correction instructions. Valid oversized
+candidates can be shortened and reused after a restart. Rejected output stays
+in private failed-call history and never becomes memory or exported citations.
 
-`/export` includes `memory.md` plus memory, pins (including released ones), full
-compaction source/summary records and original research in `history.json`.
+If validation or size repair still fails, a bounded extract copies passages from
+the original source. It is labeled as partial, with omissions available in the
+full archive. Research can continue without treating it as exhaustive or verified.
+Owner cancellation and terminal account failures still apply. Originals remain
+intact; a fallback does not offer perfect semantic retention.
 
-Semantic summaries can lose nuance or make mistakes. Structural validation and
-verbatim protection improve retention; they do not prove factual correctness or
-perfect recall. Original archives remain available for inspection, but models do
-not automatically retrieve any arbitrary archived passage. Pin information that
-must remain immediately available to every research step.
+Compaction uses MB's efficient model and supported effort, escalating after failed
+validation. It shares OpenAI allowance and the research scheduling gate. `/pause`
+can cancel it, and completed work is reused after resume. No additional API billing
+route is introduced.
 
-Compaction does not extend the research deadline. Defaults remain 24 rounds and
-72 elapsed hours; a week-long run requires appropriate time/round settings and
-can still pause earlier for human evidence or a plateau.
+`/export` includes `memory.md`, full rounds and dialogue, source/summary records,
+model selections and active/released pins in `history.json`. Arbitrary archived
+passages are not automatically retrieved by models. Pin exact information that
+must remain immediately available. Compaction does not extend the run deadline.

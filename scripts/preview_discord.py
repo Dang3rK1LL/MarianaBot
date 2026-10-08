@@ -16,35 +16,37 @@ def fixtures() -> list[dict]:
     config.jb.effort = "high"
     run = dict(
         id="MB-7K3M-9Q2R-5V8N",
-        problem="Evaluate a paid pilot for a local repair scheduling service.",
+        problem="Assess demand and competition for a repair scheduling service with online evidence.",
         config=config.model_dump_json(),
         demo=True,
     )
     plan = """## Round summary
 Compared small repair shops with mobile technicians. The current proposal prioritizes shops with repeat bookings and a measurable scheduling problem.
 ## Changes this round
-Reduced the pilot to five shops. Added a two-week trial, a fixed spending ceiling and a clear cancellation threshold.
+Narrowed the comparison to tools aimed at small shops. Added published price ranges and labeled unsupported demand claims.
 ## Next direction
-Check whether buyers will pay before expanding the pilot.
+Compare documented prices and public buyer reviews.
 ## Full plan
 This is synthetic preview material, not actual research.
 """
     review = dict(
         score=78,
         verdict="revise",
-        next_prompt="Compare current scheduling costs with the proposed price, then define paid pilot acceptance criteria.",
+        next_prompt="Compare public scheduling prices and buyer reviews; disclose what they cannot prove.",
         blocking_issues=[
             "Willingness to pay remains untested",
             "Acquisition costs lack a reliable baseline",
         ],
-        strengths=["Pilot scope and spending now have explicit limits"],
-        human_tests=["Ask three shop owners for paid pilot commitments"],
+        strengths=["The scope stays within the original question and budget"],
+        human_tests=[],
+        online_checks=["Verify current competitor prices and review patterns"],
+        limitations=["Public interest does not prove willingness to pay"],
         dissent=["Booking volume may be too low to justify a separate tool"],
     )
     roles = [
         "Market researcher: demand and competition",
         "Business economist: pricing and unit economics",
-        "Operator: pilot milestones and dependencies",
+        "Operator: basic feasibility and dependencies",
     ]
     return [
         round_start_card(
@@ -84,8 +86,8 @@ This is synthetic preview material, not actual research.
                 agents=3,
                 elapsed=300,
                 critiques=[
-                    "Demand evidence remains weak; a paid commitment is the next useful test.",
-                    "The trial needs a spending ceiling and explicit cancellation criteria.",
+                    "Public reviews show interest but cannot establish willingness to pay.",
+                    "Current prices need verification against published listings.",
                     "Low booking volume could make manual scheduling the cheaper option.",
                 ],
             ),

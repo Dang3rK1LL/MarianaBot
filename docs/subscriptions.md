@@ -49,7 +49,8 @@ explicit model fallback are not enabled.
 
 ## Models
 
-The defaults are `gpt-6-astra` at high effort for MB/RB and `claude-opus-5-5`
+MB defaults to `gpt-6-luna` / low. Adaptive routing uses Sol and Sonnet for routine
+work; defaults for ceilings are `gpt-6-astra` at high effort and `claude-opus-5-5`
 at medium effort for JB. Choose alternatives during `mariana setup` or `/models`.
 See [Claude model configuration](https://code.claude.com/docs/en/model-config)
 for the Opus 5.5 effort recommendation.
@@ -57,7 +58,9 @@ API availability does not itself establish subscription entitlement.
 
 Doctor verifies the selected research model appears in your Codex model list. Claude authentication
 metadata does not establish access to an individual model; that is checked during
-the first real request. A model-access failure pauses the run. MarianaBot does not request model fallback; provider-side routing remains
+the first real request. A model-access failure pauses the run. Fixed mode does not request model fallback; adaptive mode selects eligible
+models from the subscription catalog. Fable and reported token-billing-only models
+are excluded. See [research routing](research.md). Provider-side routing remains
 controlled by the provider. Change the explicit model setting only if you intend that change.
 
 ## Quota monitoring

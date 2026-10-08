@@ -100,7 +100,8 @@ async def test_many_rounds_keep_early_findings_specialists_and_critical_objectio
         assert f"FACT-{number}" in memory["text"]
         assert f"FACT-{number + 100}" in memory["text"]
     assert len(memory["text"]) <= 2000
-    assert len(store.pins(engine.run_id)) == 3
+    assert not store.pins(engine.run_id)
+    assert len(store.rounds(engine.run_id)) == 28
     assert "market may be too small" in str(engine.memory.context())
     before = len(store.calls(engine.run_id))
     await engine.memory.advance()
@@ -118,7 +119,8 @@ async def test_many_rounds_keep_early_findings_specialists_and_critical_objectio
     report = export_run(store, engine.run_id, tmp_path / "export")
     exported = json.loads((report.parent / "history.json").read_text(encoding="utf-8"))
     assert exported["memory"]["through_round"] == 28
-    assert exported["compactions"] and exported["memory_pins"]
+    assert exported["compactions"] and len(exported["rounds"]) == 28
+    assert not exported["memory_pins"]
     assert (report.parent / "memory.md").is_file()
 
 
@@ -129,9 +131,23 @@ async def test_protected_overflow_pauses_before_any_compaction_or_model_call(sto
             "RB",
             "overflow",
             "Research",
-            {"brief": "Important constraint. " * 1000, "details": "More context"},
+            {"owner_problem": "Important constraint. " * 1000, "details": "More context"},
         )
     assert not store.calls(engine.run_id)
+
+
+async def test_large_legacy_brief_compacts_within_the_archive_chunk_bound(store, config):
+    config.research.max_context_chars = 60000
+    engine, _ = engine_with(store, config)
+    result = await engine.call(
+        "RB",
+        "legacy-brief",
+        "Research",
+        {"problem": "Keep this exact owner scope", "brief": "Generated detail. " * 1600},
+    )
+    assert result["text"]
+    assert store.compactions(engine.run_id)
+    assert "Keep this exact owner scope" in result["prompt"]
 
 
 @pytest.mark.parametrize("bad", ["oversize", "source_id", "invented_url", "empty", "invalid_json"])
@@ -164,10 +180,15 @@ async def test_invalid_summary_never_replaces_a_good_checkpoint(
             return {"text": f"```json\n{raw}\n```" if fenced else raw, "usage": {}}
 
     engine.clients["openai"] = InvalidSummary()
-    with pytest.raises((Halt, ClientError), match="Memory compaction failed validation"):
-        await engine.memory.compact("Research detail. " * 300, 1000, "invalid")
+    summary = await engine.memory.compact("Research detail. " * 300, 1000, "invalid")
+    assert "Partial archive extract" in summary and len(summary) <= 1000
+    assert "https://invented.invalid" not in summary
     assert store.memory(engine.run_id)["text"] == "Existing valid memory"
-    assert all(row["summary"] is None for row in store.compactions(engine.run_id))
+    assert store.compactions(engine.run_id)[0]["summary"] == summary
+    assert all(
+        "https://invented.invalid" not in (row["summary"] or "")
+        for row in store.compactions(engine.run_id)
+    )
     rejected = store.calls(engine.run_id)[-1]
     assert rejected["state"] == "invalid"
     assert rejected["result"]["text"]
@@ -356,11 +377,11 @@ async def test_size_repair_stops_without_progress_or_when_budget_is_exhausted(
 
     client = UnboundedSummary()
     engine.clients["openai"] = client
-    with pytest.raises(ClientError, match="size repair limit" if shrinks else "insufficient size"):
-        await engine.memory.compact("Long evidence. " * 100, 600, "stalled")
+    summary = await engine.memory.compact("Long evidence. " * 100, 600, "stalled")
+    assert "Partial archive extract" in summary and len(summary) <= 600
     assert len(client.inputs) == (2 if shrinks else 1)
     assert store.memory(engine.run_id)["text"] == "Good checkpoint"
-    assert all(row["summary"] is None for row in store.compactions(engine.run_id))
+    assert store.compactions(engine.run_id)[0]["summary"] == summary
     assert all(call["state"] == "invalid" for call in store.calls(engine.run_id))
 
 
@@ -396,12 +417,14 @@ async def test_oversized_candidate_must_pass_identity_and_url_checks_before_repa
     client = InvalidCandidate()
     engine.clients["openai"] = client
     source = "Original evidence. " * 100
+    summaries = []
     for _ in range(2):
-        with pytest.raises(Halt, match="source_id does not match|URL absent from the source"):
-            await engine.memory.compact(source, 600, "invalid")
-    assert len(client.inputs) == 4
+        summaries.append(await engine.memory.compact(source, 600, "invalid"))
+    assert summaries[0] == summaries[1]
+    assert "https://invented.invalid" not in summaries[0]
+    assert len(client.inputs) == 2  # Reuse the saved extract, not the rejected response.
     assert all(item["source"] == source for item in client.inputs)
-    assert all(row["summary"] is None for row in store.compactions(engine.run_id))
+    assert all(row["summary"] == summaries[0] for row in store.compactions(engine.run_id))
 
 
 async def test_pause_during_compaction_keeps_round_and_resumes_without_repeating_research(
@@ -442,9 +465,12 @@ async def test_pause_during_compaction_keeps_round_and_resumes_without_repeating
 def test_released_pins_remain_archived_without_being_reactivated_by_backfill(store, config):
     run_id = store.create_run("Pins", config, demo=True)
     store.save_round(run_id, 1, 0, "Plan", {"dissent": ["An old objection"]})
-    pin = store.pins(run_id)[0]
-    store.unpin(run_id, pin["id"])
+    with store.db:
+        store._pin(run_id, "dissent", "An old objection", "round 1")
+    owner_pin = store.pin(run_id, "The owner's instruction")
     store.protect_reviews(run_id)
+    assert [pin["id"] for pin in store.pins(run_id)] == [owner_pin]
+    store.unpin(run_id, owner_pin)
     assert not store.pins(run_id)
     assert store.pins(run_id, active_only=False)[0]["text"] == "An old objection"
     assert size({"brief": "verbatim"}) < 8000

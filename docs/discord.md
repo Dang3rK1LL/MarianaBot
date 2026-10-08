@@ -113,7 +113,7 @@ In your private Discord channel:
 /mariana recap
 /mariana help
 /mariana ask message:What changed in the last round?
-/mariana steer message:Limit the pilot to EUR 500 and interview five customers.
+/mariana steer message:Keep the EUR 500 budget and validate with public online sources.
 /mariana pause
 /mariana resume
 /mariana stop run_id:YOUR_RUN_ID confirm:true
@@ -171,7 +171,7 @@ to formatted text.
 - **Research waiting / continuing:** waits of at least one minute and automatic
   continuation when they end. Brief request-spacing delays do not produce posts.
 - **Paused / complete / stopped:** the saved reason, next direction and any
-  requested human evidence. MB answers also use cards.
+  next online checks and evidence limitations. MB answers also use cards.
 
 The feed posts at stage boundaries rather than after every individual agent call.
 It uses saved research output and does not make extra model requests to write

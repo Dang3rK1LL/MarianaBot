@@ -14,11 +14,24 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
 
-class BrainConfig(StrictModel):
+class ModelConfig(StrictModel):
     model: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9._-]+$")
+    effort: Literal["auto", "low", "medium", "high", "xhigh", "max"] = "high"
+
+    @model_validator(mode="after")
+    def subscription_only(self):
+        if "fable" in self.model.lower():
+            raise ValueError("Fable requires token billing and is excluded from MarianaBot")
+        return self
+
+
+class BrainConfig(ModelConfig):
     agents: int = Field(default=3, ge=2, le=12)
     concurrency: int = Field(default=1, ge=1, le=4)
-    effort: Literal["auto", "low", "medium", "high", "xhigh", "max"] = "high"
+
+
+class RoutingConfig(StrictModel):
+    mode: Literal["adaptive", "fixed"] = "adaptive"
 
 
 class SubscriptionConfig(StrictModel):
@@ -42,6 +55,8 @@ class ResearchConfig(StrictModel):
     max_context_chars: int = Field(default=60000, ge=8000, le=200000)
     request_timeout_seconds: float = Field(default=1800, gt=0, le=7200)
     max_retries: int = Field(default=3, ge=0, le=12)
+    max_response_words: int = Field(default=700, ge=150, le=2000)
+    memory_chars: int = Field(default=8000, ge=1000, le=32000)
 
 
 class UpdateConfig(StrictModel):
@@ -52,6 +67,8 @@ class Config(StrictModel):
     updates: UpdateConfig = Field(default_factory=UpdateConfig)
     subscription: SubscriptionConfig = Field(default_factory=SubscriptionConfig)
     research: ResearchConfig = Field(default_factory=ResearchConfig)
+    routing: RoutingConfig = Field(default_factory=RoutingConfig)
+    mb: ModelConfig = Field(default_factory=lambda: ModelConfig(model="gpt-6-luna", effort="low"))
     rb: BrainConfig = Field(default_factory=lambda: BrainConfig(model="gpt-6-astra"))
     jb: BrainConfig = Field(
         default_factory=lambda: BrainConfig(model="claude-opus-5-5", effort="medium")
@@ -78,6 +95,8 @@ def save_model_preferences(
     config = Config.model_validate(config.model_dump())
     source = current if current is not None else DEFAULT_TOML
     changes = {
+        "routing": {"mode": config.routing.mode},
+        "mb": {"model": config.mb.model, "effort": config.mb.effort},
         "rb": {"model": config.rb.model, "effort": config.rb.effort},
         "jb": {"model": config.jb.model, "effort": config.jb.effort},
     }
@@ -135,6 +154,16 @@ web_search = true
 max_context_chars = 60000
 request_timeout_seconds = 1800
 max_retries = 3
+max_response_words = 700
+memory_chars = 8000
+
+[routing]
+# Route routine work to efficient subscription models; RB/JB choices are ceilings.
+mode = "adaptive"
+
+[mb]
+model = "gpt-6-luna"
+effort = "low"
 
 [rb]
 model = "gpt-6-astra"

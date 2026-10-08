@@ -38,6 +38,42 @@ async def send(app, pilot, text):
     await pilot.pause()
 
 
+async def test_fullscreen_shows_actual_models_all_windows_and_stable_sidebar(tmp_path, monkeypatch):
+    app = MarianaChat(tmp_path / "fullscreen", tmp_path / "mariana.toml", manager=FakeManager())
+    monkeypatch.setattr(app, "request_usage_refresh", lambda: None)
+    cfg = Config()
+    run_id = app.store.create_run("Keep the original scope", cfg)
+    app.store.update_run(run_id, status="running")
+    app.run_id = run_id
+    app.manager.record = {"run_id": run_id, "mode": "research"}
+    app.store.begin_call(run_id, "review", "JB", "anthropic", "claude-sonnet-5", "medium")
+    app.store.set_limits(
+        "anthropic",
+        {
+            "windows": [
+                {"name": "seven_day", "percent": 9, "reset": 9999999999},
+                {"name": "five_hour", "percent": 45, "reset": 9999999000},
+                {"name": "seven_day_opus", "percent": 20, "reset": 9999999999},
+            ]
+        },
+    )
+    async with app.run_test(size=(180, 50)) as pilot:
+        await pilot.pause()
+        models = str(app.query_one("#usage-models").content)
+        assert "claude-sonnet-5 / medium" in models
+        assert "claude-opus-5-5" in str(app.query_one("#routing-summary").content)
+        quotas = str(app.query_one("#limit-anthropic").content)
+        assert quotas.index("5h") < quotas.index("7d") and "Opus 7d" in quotas
+        assert "Subscriptions" not in str(app.query_one("#status-line").content)
+        assert "/pause" in str(app.query_one("#research-footer").content)
+        panel = app.query_one("#usage-strip").region
+        app.query_one(Composer).load_text("Feedback\n" * 12)
+        await pilot.pause()
+        assert app.query_one("#usage-strip").region == panel
+        await pilot.click("#refresh-usage")
+        assert app.query_one("#conversation").region.right <= panel.x
+
+
 async def test_multiline_paste_send_followup_and_steer(tmp_path):
     app = chat(tmp_path)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -62,7 +98,7 @@ async def test_multiline_paste_send_followup_and_steer(tmp_path):
         await send(app, pilot, "What is the biggest risk?")
         await send(app, pilot, "/steer Limit spending to EUR 500.\nFocus on local buyers.")
         commands = app.store.commands(app.run_id)
-        assert [c["kind"] for c in commands] == ["ask", "steer"]
+        assert [c["kind"] for c in commands] == ["steer", "steer"]
         assert "local buyers" in commands[-1]["text"]
         await send(app, pilot, "/pause")
         assert app.store.run(app.run_id)["control"] == "pause"

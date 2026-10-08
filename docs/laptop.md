@@ -22,7 +22,7 @@ compares and combines them. Three JB critics challenge the plan; their
 chair writes a review and the next prompt for RB. You see each brief, combined plan
 and review in the conversation. Expand long messages to read them in full.
 
-Ask MB a question by typing normally. Use `/steer` to change the brief or answer
+Ordinary messages save feedback for the next round. Use `/ask` for questions and `/steer` to answer
 MB's initial questions so those answers affect subsequent research.
 
 The info panel stays at the upper right, or above the conversation in terminals
@@ -36,7 +36,7 @@ The editor grows for long drafts, and all controls remain visible at 80×24.
 
 | Type in chat | Result |
 |---|---|
-| `/steer Limit the pilot to EUR 500.` | Changes the brief before the next round |
+| `/steer Keep the EUR 500 budget and original market.` | Changes the brief before the next round |
 | `/pause` | Cancels active requests and keeps completed work |
 | `/resume` | Continues this research from saved checkpoints |
 | `/stop` | Permanently ends research; the plan remains saved |
@@ -45,7 +45,7 @@ The editor grows for long drafts, and all controls remain visible at 80×24.
 | `/usage` | Shows provider-reported usage and reset times |
 | `/models` | Chooses model IDs and effort for new research |
 | `/memory` | Shows working memory and protected note IDs |
-| `/pin Keep the pilot below EUR 500.` | Preserves exact wording in future requests |
+| `/pin Budget ceiling: EUR 500.` | Preserves exact wording in future requests |
 | `/unpin ID` | Releases an obsolete protected note; keeps its archive |
 | `/export` | Saves a report, transcript, history and citations; prints the folder |
 | `/retry` | Retries pending MB messages after a failed reply |
@@ -62,14 +62,15 @@ Choose from the live model lists reported by your signed-in
 clients. Effort options change with the selected model; models without adjustable
 effort show a disabled **Default** field. If a list cannot load, check that client's
 login and use **Retry**. New models appear when the client reports them. MarianaBot
-does not request a fallback model. Saved choices affect new runs, while an
-existing conversation retains its original settings. MB and compaction use the
-research model. The screen shows the current run's choices when one is open.
+uses available efficient models in adaptive mode; fixed mode retains exact RB/JB
+choices. MB has its own lightweight selection. Fable is excluded. Saved choices
+affect new runs; current/last selections are shown in the fullscreen sidebar.
 
-![Model and effort menus showing GPT-6.1 Sol at extra high and Claude Opus 5.5 at high in an 80-column terminal; offline fixture.](assets/models.png)
+![Adaptive routing with a separate lightweight MB model and RB/JB ceilings; offline fixture.](assets/models.png)
 
 Older research is automatically summarized using MB's allowance. The current
-brief, pins and recorded objections stay verbatim; full originals remain saved.
+owner problem, feedback and explicit pins stay verbatim; historical objections
+remain archived, while the latest review supplies current issues.
 Use `/memory` to inspect this and `/export` for `memory.md` and the source archive.
 Summaries can miss detail; pin anything that must always be present. See the
 [memory guide](memory.md) for exact retention and recovery behavior.
@@ -86,8 +87,8 @@ about paused or finished research without resuming the research loop.
 Default settings schedule the three specialists in each team one at a time. Raise
 the concurrency settings in `mariana.toml` before creating a new run if you want
 simultaneous specialists. MB and RB share OpenAI capacity; JB uses Claude capacity.
-All three respect reported cooldowns. MB replies may wait behind a research call
-or for OpenAI usage to reset. Unknown Claude usage is shown as unknown.
+All three respect reported cooldowns. MB replies have their own scheduling slot,
+but still wait for shared OpenAI allowance to reset. Unknown Claude usage is shown as unknown.
 
 Live chat refreshes Codex and Claude allowance at every application start and every minute
 while open, including when research is idle or paused. Reopening the cloud
@@ -99,9 +100,9 @@ refresh-failed label for that provider. A slow or failed check does not block th
 other provider's display. Offline demos do not fetch account limits.
 
 Research ends at 24 rounds or 72 elapsed hours by default, or earlier on sustained
-approval, a plateau, or a need for human evidence. For a human-evidence pause,
-provide that evidence with `/steer`, then `/resume`. Reviewer scores express model
-judgment; test the recommendations with real customers and evidence.
+approval or exhausted useful online evidence. Routine human-evidence verdicts no
+longer pause the loop. Missing private facts remain limitations. Reviewer scores
+express model judgment, not independently verified demand.
 
 Keep the laptop awake and connected to the internet. Laptop sleep suspends work;
 closing the lid may trigger sleep. Pause before planned shutdown. After a reboot,

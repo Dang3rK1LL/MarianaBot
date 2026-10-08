@@ -90,7 +90,7 @@ def created_card(run: dict) -> dict:
         [
             (
                 "Models",
-                f"MB/RB: {config.rb.model} · {config.rb.effort}\nJB: {config.jb.model} · {config.jb.effort}",
+                f"{config.routing.mode.capitalize()} routing\nMB: {config.mb.model} · {config.mb.effort}\nRB ceiling: {config.rb.model} · {config.rb.effort}\nJB ceiling: {config.jb.model} · {config.jb.effort}",
             ),
             (
                 "Updates",
@@ -132,7 +132,7 @@ def round_start_card(run: dict, payload: dict) -> dict:
         ),
         (
             "Models",
-            f"MB/RB: {config.rb.model} · {config.rb.effort}\nJB: {config.jb.model} · {config.jb.effort}",
+            f"{config.routing.mode.capitalize()} routing · {payload.get('phase', 'foundation')}\nMB: {config.mb.model} · {config.mb.effort}\nRB ceiling: {config.rb.model} · {config.rb.effort}\nJB ceiling: {config.jb.model} · {config.jb.effort}",
         ),
         (
             "Retrieval",
@@ -204,7 +204,7 @@ def stage_card(run: dict, payload: dict) -> dict:
         color = PURPLE
     else:
         title = f"Round {number} · Review decision"
-        description = f"{payload['agents']} independent critiques are saved. The review chair is weighing objections and deciding whether the plan needs revision or human evidence."
+        description = f"{payload['agents']} independent critiques are saved. The review chair is checking scope, online evidence and the next research priority."
         fields = [
             (f"Critique {i + 1} · excerpt", prose(value, 350))
             for i, value in enumerate(payload.get("critiques", [])[:3])
@@ -237,7 +237,8 @@ def recap_card(run: dict, row: dict, snapshot: dict, previous: dict | None = Non
             bullets(review.get("blocking_issues", []), 550) or "No blocking issues reported.",
         ),
         ("Strengths", bullets(review.get("strengths", []), 350, 2)),
-        ("Needs your input", bullets(review.get("human_tests", []), 450, 3)),
+        ("Next online checks", bullets(review.get("online_checks", []), 450, 3)),
+        ("Evidence limitations", bullets(review.get("limitations", []), 450, 3)),
         ("Disagreements retained", bullets(review.get("dissent", []), 350, 2)),
     ]
     fields += metrics(snapshot)
@@ -263,7 +264,7 @@ def state_card(run: dict, snapshot: dict, review: dict | None = None) -> dict:
     if review:
         fields += [
             ("Next direction", prose(review.get("next_prompt", ""), 500)),
-            ("Needs your input", bullets(review.get("human_tests", []), 450)),
+            ("Evidence limitations", bullets(review.get("limitations", []), 450)),
         ]
     fields += metrics(snapshot)
     return card(

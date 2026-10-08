@@ -36,10 +36,11 @@ def export_run(store: Store, run_id: str, target: Path) -> Path:
             "## Latest critical review",
             f"Reviewer score: {last['review']['score']}/100; verdict: {last['review']['verdict']}.",
         ]
-        for field in ("strengths", "blocking_issues", "human_tests", "dissent"):
+        for field in ("strengths", "blocking_issues", "online_checks", "limitations", "dissent"):
             report += [
                 f"### {field.replace('_', ' ').title()}",
-                "\n".join("- " + item for item in last["review"][field]) or "None reported.",
+                "\n".join("- " + item for item in last["review"].get(field, []))
+                or "None reported.",
             ]
         report += [
             "### Next research prompt",
@@ -62,7 +63,7 @@ def export_run(store: Store, run_id: str, target: Path) -> Path:
     report += [
         "## Interpretation",
         "Model agreement and reviewer scores do not establish market demand or factual accuracy. "
-        "Use the listed experiments and primary sources to test the plan.",
+        "Validation uses online evidence only. Private demand, negotiated terms and future outcomes remain unverified unless supplied by the owner.",
     ]
     atomic_text(target / "report.md", "\n\n".join(report) + "\n")
     atomic_text(

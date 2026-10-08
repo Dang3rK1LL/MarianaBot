@@ -161,19 +161,20 @@ def make_round(score=90, verdict="approve", blocks=None, revision=0):
             next_prompt="Test remaining assumptions.",
             human_tests=[],
             dissent=[],
+            foundation_ready=True,
         ).model_dump(),
     }
 
 
 def test_approval_requires_streak_and_no_blockers(config):
     assert stop_reason([make_round()], config) is None
-    assert "Sustained" in stop_reason([make_round(), make_round()], config)
+    assert "supported across reviews" in stop_reason([make_round(), make_round()], config)
     assert stop_reason([make_round(), make_round(blocks=["Demand unknown"])], config) is None
     assert stop_reason([make_round(), make_round(revision=1)], config) is None
 
 
-def test_human_evidence_pauses_even_with_high_score(config):
-    assert "Human evidence" in stop_reason([make_round(verdict="needs_human")], config)
+def test_legacy_human_evidence_does_not_pause_autonomous_research(config):
+    assert stop_reason([make_round(verdict="needs_human")], config) is None
 
 
 def test_crash_recovery_preserves_unknown_calls(store, config):

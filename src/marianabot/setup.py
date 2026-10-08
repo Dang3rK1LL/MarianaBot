@@ -34,7 +34,10 @@ def configure(path: Path, directory: Path, console: Console):
     console.print("[bold]MarianaBot setup[/bold]")
     console.print("Research runs on this machine. Your data and settings stay here.")
     console.print("Press Enter to keep each choice. Model access depends on your subscriptions.")
-    config.rb = choose_brain("Research + master", config.rb)
+    console.print(
+        "Adaptive routing uses efficient models for routine work. Master defaults to Luna / low; change it in /models."
+    )
+    config.rb = choose_brain("Research ceiling", config.rb)
     config.jb = choose_brain("Judge", config.jb)
     console.print(
         "\nBefore live research, disable paid extra usage, usage credits and automatic credit "

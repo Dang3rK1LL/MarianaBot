@@ -9,6 +9,7 @@ from marianabot.models_ui import ModelsScreen
 
 CATALOGS = {
     "rb": [
+        ModelOption("gpt-6-luna", "Luna", ("low", "medium", "high")),
         ModelOption("gpt-6-astra", "GPT-6 Astra", ("low", "medium", "high", "xhigh", "max")),
         ModelOption("future-research-model", "Future research", ("medium",), "medium"),
     ],
