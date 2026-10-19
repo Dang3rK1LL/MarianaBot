@@ -16,7 +16,13 @@ from marianabot.clients import (
 )
 from marianabot.config import Config
 from marianabot.limits import SubscriptionLimits
-from marianabot.memory import Compactor, SummaryTooLong, SummaryValidationError, size
+from marianabot.memory import (
+    Compactor,
+    SummaryTooLong,
+    SummaryValidationError,
+    extractive_summary,
+    size,
+)
 from marianabot.model_catalog import parse_models
 from marianabot.prompts import (
     JB_ROLES,
@@ -263,6 +269,25 @@ class Engine:
         cached = self.store.cached(self.run_id, task)
         if cached:
             return cached
+        words = min(
+            self.config.research.max_response_words,
+            250 if brain == "MB" else 450 if "-rb-" in task or "-jb-" in task else 700,
+        )
+        if not internal_compaction:
+            for candidate in self.store.length_rejections(self.run_id, task):
+                result = candidate["result"]
+                try:
+                    self.validate_output(result, words, structured=structured, validate=validate)
+                except (ValidationError, ValueError):
+                    continue
+                result["recovered_validation_error"] = result.pop("validation_error")
+                self.store.finish(candidate["id"], "done", result, record_usage=False)
+                self.emit(
+                    f"{brain} · {task} · saved response recovered; no new model call",
+                    kind="output_recovered",
+                    payload={"call_id": candidate["id"], "task": task, "brain": brain},
+                )
+                return result
         provider = "anthropic" if brain == "JB" else "openai"
         actual_search = search and self.config.research.web_search
         max_chars = (
@@ -301,10 +326,6 @@ class Engine:
             difficult |= current[-1]["review"].get("score", 100) <= current[-2]["review"].get(
                 "score", 0
             )
-        words = min(
-            self.config.research.max_response_words,
-            250 if brain == "MB" else 450 if "-rb-" in task or "-jb-" in task else 700,
-        )
         if not internal_compaction:
             instruction += f"\nCurrent phase: {phase}. {PHASES[phase]}\nRESPONSE_BUDGET: at most {words} words. Return only the concise requested result."
         content = prompt(instruction, data, max_chars, actual_search)
@@ -369,19 +390,13 @@ class Engine:
                         result = await client.complete(call_content, actual_search)
                     result["elapsed_seconds"] = time.monotonic() - request_started
                     result["selection_reason"] = selection.reason
-                    if not internal_compaction and (
-                        len(result["text"].split()) > words or len(result["text"]) > words * 14
-                    ):
-                        raise ValueError("Response exceeds the concise output budget")
-                    if structured:
-                        raw = result["text"].strip()
-                        if raw.startswith(chr(96) * 3):
-                            raw = "\n".join(raw.splitlines()[1:-1])
-                        result["review"] = Review.model_validate_json(raw).model_dump()
-                        if result["review"]["verdict"] == "needs_human":
-                            result["review"]["verdict"] = "revise"
-                    if validate:
-                        validate(result)
+                    self.validate_output(
+                        result,
+                        words,
+                        structured=structured,
+                        validate=validate,
+                        internal_compaction=internal_compaction,
+                    )
                     result["prompt"] = call_content
                     self.store.finish(call_id, "done", result)
                     self.emit(f"{brain} · {task} · saved")
@@ -455,6 +470,64 @@ class Engine:
                 raise Halt("paused", str(error))
             attempt += 1
             await self.wait(min(120, 2**attempt * 3) + random.random(), str(error))
+
+    def validate_output(
+        self,
+        result: dict,
+        words: int,
+        *,
+        structured=False,
+        validate=None,
+        internal_compaction=False,
+    ):
+        if structured:
+            raw = result["text"].strip()
+            if raw.startswith(chr(96) * 3):
+                raw = "\n".join(raw.splitlines()[1:-1])
+            result["review"] = Review.model_validate_json(raw).model_dump()
+            if result["review"]["verdict"] == "needs_human":
+                result["review"]["verdict"] = "revise"
+        if validate:
+            validate(result)
+        if not internal_compaction:
+            self.bound_output(result, words, structured=structured)
+
+    def bound_output(self, result: dict, target_words: int, *, structured=False):
+        """Length is presentation, not a failed research or schema validation."""
+        text = result["text"]
+        count = len(text.split())
+        limit = self.config.research.max_response_words
+        if count <= target_words and len(text) <= limit * 14:
+            return
+        oversized = count > limit or len(text) > limit * 14
+        action = "within_limit"
+        if oversized:
+            if structured:
+                # Keep validated fields intact: trimming JSON or an objection can
+                # change the verdict's meaning. Schema validation happens first.
+                action = "structured_retained"
+            else:
+                result["original_text"] = text
+                result["text"] = extractive_summary(text, limit * 14, max_words=limit)
+                action = "partial_extract"
+        result["output_budget"] = {
+            "target_words": target_words,
+            "max_words": limit,
+            "original_words": count,
+            "original_chars": len(text),
+            "action": action,
+        }
+        if action != "within_limit":
+            self.emit(
+                "Length target exceeded; "
+                + (
+                    "partial extract used, full response archived"
+                    if action == "partial_extract"
+                    else "validated judge fields retained"
+                ),
+                kind="output_budget",
+                payload=result["output_budget"],
+            )
 
     async def group(self, calls) -> list[dict]:
         tasks = [asyncio.create_task(call) for call in calls]

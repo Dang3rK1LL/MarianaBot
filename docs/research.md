@@ -13,9 +13,18 @@ recommendation. A changed brief revision restarts the foundation gate, retaining
 saved evidence. Three independent RB proposals and three independent JB critiques
 feed their respective chairs by default.
 
-Specialists target 450 words, MB 250, and chairs at most 700.
-`research.max_response_words` can lower those budgets. Overlong output is rejected
-and retried within the configured limit. Reviews allow at most three blockers,
+Specialists target 450 words, MB 250, and chairs 700.
+`research.max_response_words` sets the overall narrative limit (700 by default)
+and can lower those targets. A role target is a writing preference, not a reason
+to pause research or escalate to a larger model. Narrative responses above the
+overall word or character limit use a labeled, bounded extract; their full text
+remains in the saved call's `original_text`. Valid judge JSON keeps its fields
+intact even if it misses the writing target; schema violations still require
+correction. Length handling makes no additional model calls.
+On resume, responses rejected solely by the old length check are revalidated and
+reused under the same task and call ID. Schema checks still apply; usage is not
+counted a second time and the previous rejection remains recorded in the result.
+Reviews allow at most three blockers,
 three online checks and two dissent notes. Approval rejects declared violations
 of scope, owner constraints or online-only validation.
 

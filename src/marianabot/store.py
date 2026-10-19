@@ -276,6 +276,23 @@ class Store:
         ).fetchone()
         return json.loads(row[0]) if row else None
 
+    def length_rejections(self, run_id: str, task: str) -> list[dict]:
+        """Only formatting failures are eligible for revalidation without inference."""
+        rows = self.db.execute(
+            "SELECT id,result FROM calls WHERE run_id=? AND task=? AND state='invalid' ORDER BY created DESC LIMIT 16",
+            (run_id, task),
+        )
+        candidates = []
+        for row in rows:
+            result = json.loads(row["result"] or "{}")
+            if (
+                result.get("validation_error") == "Response exceeds the concise output budget"
+                and isinstance(result.get("text"), str)
+                and result["text"].strip()
+            ):
+                candidates.append({"id": row["id"], "result": result})
+        return candidates
+
     def recover(self):
         # Caller must hold the single-worker file lock.
         with self.db:
@@ -303,9 +320,9 @@ class Store:
             )
         return call_id
 
-    def finish(self, call_id: str, state: str, result=None):
+    def finish(self, call_id: str, state: str, result=None, *, record_usage=True):
         with self.db:
-            if result:
+            if result and record_usage:
                 provider = self.db.execute(
                     "SELECT provider FROM calls WHERE id=?", (call_id,)
                 ).fetchone()[0]

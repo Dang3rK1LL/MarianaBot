@@ -7,8 +7,10 @@ from pydantic import ValidationError
 from marianabot.clients import DemoClient, NativeClient
 from marianabot.config import Config
 from marianabot.engine import Engine, stop_reason
+from marianabot.memory import extractive_summary
 from marianabot.model_catalog import ModelOption, parse_models
 from marianabot.prompts import Review
+from marianabot.reports import export_run
 from marianabot.routing import TaskRouter, phase_for
 
 
@@ -202,8 +204,8 @@ def test_online_plateau_completes_only_when_no_further_online_check_is_available
     assert stop_reason(rows, config) is None
 
 
-async def test_overlong_research_is_rejected_and_retried_with_the_configured_ceiling(
-    store, config, monkeypatch
+async def test_overlong_research_keeps_original_and_uses_bounded_extract_without_retry(
+    store, config, monkeypatch, tmp_path
 ):
     config.research.max_response_words = 150
     config.research.max_retries = 1
@@ -214,13 +216,12 @@ async def test_overlong_research_is_rejected_and_retried_with_the_configured_cei
         "openai", config, store.client_directory(run_id), engine.limits["openai"]
     )
     selections = []
+    original = "Unnecessary detail. " * 200 + "https://evidence.invalid/full-source"
 
     async def complete(client, content, search=False, **kwargs):
         selections.append((client.config.rb.model, client.config.rb.effort))
         return {
-            "text": "Unnecessary detail. " * 200
-            if len(selections) == 1
-            else "A concise evidence-based conclusion.",
+            "text": original,
             "usage": {},
         }
 
@@ -230,7 +231,126 @@ async def test_overlong_research_is_rejected_and_retried_with_the_configured_cei
     monkeypatch.setattr(NativeClient, "complete", complete)
     engine.wait = no_wait
     result = await engine.call("RB", "round-1-revision-0-rb-0", "Research", {})
-    assert result["text"] == "A concise evidence-based conclusion."
-    assert selections == [("gpt-6.1-sol", "medium"), (config.rb.model, "high")]
-    assert [row["state"] for row in store.calls(run_id)] == ["invalid", "done"]
+    assert result["text"].startswith("Partial archive extract;")
+    assert len(result["text"].split()) <= config.research.max_response_words
+    assert result["original_text"] == original
+    assert result["output_budget"]["action"] == "partial_extract"
+    assert selections == [("gpt-6.1-sol", "medium")]
+    assert [row["state"] for row in store.calls(run_id)] == ["done"]
     assert store.cached(run_id, "round-1-revision-0-rb-0")["text"] == result["text"]
+    export_run(store, run_id, tmp_path / "export")
+    assert "https://evidence.invalid/full-source" in (tmp_path / "export/citations.md").read_text()
+    history = json.loads((tmp_path / "export/history.json").read_text())
+    assert history["calls"][0]["result"]["original_text"] == original
+
+
+@pytest.mark.parametrize("count", [453, 476, 700])
+async def test_role_word_target_does_not_reject_valid_research_or_escalate(
+    store, config, monkeypatch, count
+):
+    run_id = store.create_run("Keep concise online research running", config, demo=True)
+    engine = Engine(store, run_id)
+    catalog(engine.router)
+    engine.clients["anthropic"] = NativeClient(
+        "anthropic", config, store.client_directory(run_id), engine.limits["anthropic"]
+    )
+    seen = []
+    original = "Evidence " * count
+
+    async def complete(client, content, search=False, **kwargs):
+        seen.append((client.config.jb.model, client.config.jb.effort))
+        return {"text": original, "usage": {}}
+
+    monkeypatch.setattr(NativeClient, "complete", complete)
+    result = await engine.call("JB", "round-1-revision-0-jb-0", "Critique", {})
+    assert result["text"] == original
+    assert result["output_budget"]["action"] == "within_limit"
+    assert seen == [("claude-sonnet-5", "medium")]
+    assert store.calls(run_id)[0]["state"] == "done"
+
+
+async def test_valid_overlong_judge_keeps_schema_and_objections_intact(store, config):
+    run_id = store.create_run("Preserve the complete verdict", config, demo=True)
+    engine = Engine(store, run_id)
+    verdict = Review(
+        score=55,
+        verdict="revise",
+        strengths=[],
+        blocking_issues=["Evidence remains unverified. " * 300],
+        dissent=[],
+        next_prompt="Check published terms",
+    ).model_dump()
+    original = json.dumps(verdict)
+
+    class Judge:
+        async def complete(self, *args):
+            return {"text": original, "usage": {}}
+
+    engine.clients["anthropic"] = Judge()
+    result = await engine.call("JB", "round-1-revision-0-verdict", "Judge", {}, structured=True)
+    assert result["text"] == original
+    assert result["review"] == verdict
+    assert result["output_budget"]["action"] == "structured_retained"
+    assert store.calls(run_id)[0]["state"] == "done"
+
+
+async def test_length_rejection_recovery_preserves_id_and_usage_without_inference(store, config):
+    run_id = store.create_run("Recover the saved review", config, demo=True)
+    task = "round-1-revision-0-jb-0"
+    call_id = store.begin_call(run_id, task, "JB", "anthropic", "claude-sonnet-5", "medium")
+    original = "Evidence " * 476
+    store.finish(
+        call_id,
+        "invalid",
+        {
+            "text": original,
+            "prompt": "Saved research prompt",
+            "usage": {"input_tokens": 100, "output_tokens": 50},
+            "validation_error": "Response exceeds the concise output budget",
+        },
+    )
+    usage = store.usage_totals(run_id)
+
+    class Forbidden:
+        async def complete(self, *args):
+            pytest.fail("A recoverable length failure must not generate research again")
+
+    engine = Engine(store, run_id, clients={"anthropic": Forbidden()})
+    for _ in range(2):
+        result = await engine.call("JB", task, "Critique", {})
+        assert result["text"] == original
+        assert result["recovered_validation_error"] == "Response exceeds the concise output budget"
+        assert "validation_error" not in result
+    assert len(store.calls(run_id)) == 1
+    assert store.calls(run_id)[0]["id"] == call_id
+    assert store.calls(run_id)[0]["state"] == "done"
+    assert store.usage_totals(run_id) == usage
+    assert (
+        len([event for event in store.events(run_id) if event["kind"] == "output_recovered"]) == 1
+    )
+
+
+async def test_length_recovery_still_rejects_invalid_judge_schema(store, config):
+    run_id = store.create_run("Validate old judge JSON before recovering", config, demo=True)
+    task = "round-1-revision-0-verdict"
+    invalid = store.begin_call(run_id, task, "JB", "anthropic", "claude-sonnet-5", "medium")
+    store.finish(
+        invalid,
+        "invalid",
+        {
+            "text": "Long narrative instead of JSON. " * 300,
+            "validation_error": "Response exceeds the concise output budget",
+        },
+    )
+    engine = Engine(store, run_id)
+    result = await engine.call("JB", task, "JUDGE_JSON", {}, structured=True)
+    assert result["review"]["verdict"] == "revise"
+    assert [row["state"] for row in store.calls(run_id)] == ["invalid", "done"]
+
+
+@pytest.mark.parametrize("text", ["word " * 1000, "https://evidence.invalid/" + "x" * 8000])
+def test_bounded_extract_handles_single_long_paragraph_and_urls(text):
+    result = extractive_summary(text, 2100, max_words=150)
+    assert result.startswith("Partial archive extract;")
+    assert len(result) <= 2100 and len(result.split()) <= 150
+    assert "https://" not in result  # Do not emit a truncated URL.

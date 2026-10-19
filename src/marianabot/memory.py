@@ -321,10 +321,11 @@ class Compactor:
         }
 
 
-def extractive_summary(text: str, target: int) -> str:
+def extractive_summary(text: str, target: int, *, max_words: int | None = None) -> str:
     """Copy bounded original passages; disclose omissions instead of inventing a digest."""
     header = "Partial archive extract; omissions remain in the full saved source.\n"
     remaining = max(0, target - len(header))
+    remaining_words = None if max_words is None else max(0, max_words - len(header.split()))
     passages = re.split(r"\n+|(?<=[.!?])\s+(?=[A-Z0-9])", text)
     indexed = [(i, passage.strip()) for i, passage in enumerate(passages) if passage.strip()]
     priority = re.compile(
@@ -335,13 +336,20 @@ def extractive_summary(text: str, target: int) -> str:
     for index, passage in sorted(
         indexed, key=lambda item: (not bool(priority.search(item[1])), item[0])
     ):
-        if len(passage) + 1 <= remaining:
+        count = len(passage.split())
+        if len(passage) + 1 <= remaining and (remaining_words is None or count <= remaining_words):
             selected.append((index, passage))
             remaining -= len(passage) + 1
+            if remaining_words is not None:
+                remaining_words -= count
     if not selected and indexed:
         # A single enormous line cannot be preserved in a bounded summary. Keep
         # complete words and avoid a cut through a URL; the archive keeps all bytes.
         passage = indexed[0][1][:remaining].rsplit(" ", 1)[0]
+        if remaining_words is not None:
+            words = list(re.finditer(r"\S+", passage))
+            if len(words) > remaining_words:
+                passage = passage[: words[remaining_words - 1].end()] if remaining_words else ""
         passage = re.sub(r"https?://\S*$", "", passage)
         selected.append((0, passage))
     return (header + "\n".join(passage for _, passage in sorted(selected)))[:target]
