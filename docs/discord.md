@@ -154,28 +154,21 @@ to formatted text.
 
 ### What appears during research
 
-- **Research created:** the ID, problem and selected models when automatic following is enabled.
-- **Preparing the research brief / Research brief ready:** MB defines the
-  objective, constraints, assumptions and evidence needed.
-- **Round started:** the research question, current focus, previous review and
-  blockers, specialist roles, model settings and retrieval availability.
-- **Plan synthesis:** independent proposals are saved and the research chair is
-  comparing recommendations and assembling a plan.
-- **Independent critique:** the new plan's findings and proposed changes, plus
-  the judges' roles and what they are checking.
-- **Review decision:** short excerpts of the saved critiques while the review
-  chair weighs objections and determines the verdict.
-- **Round complete:** recap, changes, next research priority, review score and its
-  change, open issues, strengths, human tests and retained disagreements.
-  Timing and tokens appear in separate compact fields.
+- **Created / brief ready:** one sentence describing the actual topic; the ID is
+  in the footer. Before intake finishes, a prompt template is never used as a brief.
+- **Round started:** the active round, next online checks and last review score.
+- **Combining findings / reviewing evidence / review decision:** what the team is
+  doing now, with compact findings and changes when saved.
+- **Round complete:** finding, changes, open issues, uncertainty and next step,
+  plus score, elapsed time and round tokens.
 - **Research waiting / continuing:** waits of at least one minute and automatic
   continuation when they end. Brief request-spacing delays do not produce posts.
-- **Paused / complete / stopped:** the saved reason, next direction and any
-  next online checks and evidence limitations. MB answers also use cards.
+- **Paused / complete / stopped:** the recorded reason and exact stage. A paused
+  card identifies the saved-round count and resume command. MB answers also use cards.
 
 The feed posts at stage boundaries rather than after every individual agent call.
 It uses saved research output and does not make extra model requests to write
-Discord summaries. Long sections use labelled excerpts; full output remains in
+Discord summaries. Full output remains in
 MarianaBot and its exports. Offline fixtures are clearly marked in card footers.
 
 `ask` starts an MB reply worker if needed, including for a paused or completed
@@ -230,10 +223,14 @@ a local token file, and starts the installed Discord service.
 ## Delivery and metric limits
 
 The bot checks saved state every 15 seconds by default. It creates summaries
-from the research chair's existing output and judge's next prompt, without an
-extra model request. Older plans lacking summary sections use a labelled excerpt.
-New round recaps retain separate token totals for the round's RB/JB calls and the
-whole run, along with elapsed time at completion. Later rounds cannot inflate an
+from compact update metadata supplied by the existing research and review calls,
+without an extra model request. Cards use one sentence from MB's prepared objective,
+never the opening of a prompt template. Recaps show findings, concrete changes,
+open issues and the next online step. Older plans use saved summary sections or
+review fields; a missing summary never falls back to a raw plan excerpt.
+Recaps display round-team token totals and elapsed time at completion. Run totals,
+cache and full model settings remain available through status and the app.
+Later rounds cannot inflate an
 earlier recap. Starts, intermediate stages, MB messages and recaps are collected
 in order, including when a round finishes between polling checks.
 Repeated stages after checkpoint recovery are deduplicated. Round duration
@@ -242,7 +239,7 @@ latest available snapshot at collection.
 
 Round-team tokens include the selected round's RB/JB calls and retries. Run totals
 also include MB and context compaction calls. Cache-read/write tokens are shown
-when reported and are already included in input totals; they are not added again.
+in the detailed usage report and are already included in input totals; they are not added again.
 Usage is reported by the native clients. Unknown allowance or reset times remain
 unknown, and incomplete token totals are labelled partial. Token totals belong
 to the selected run; allowance snapshots describe the shared provider account.

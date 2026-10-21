@@ -56,6 +56,9 @@ class Review(StrictModel):
     scope_aligned: bool = True
     owner_constraints_preserved: bool = True
     online_only: bool = True
+    summary: str = ""
+    changes: list[str] = Field(default_factory=list)
+    next_step: str = ""
 
     @model_validator(mode="after")
     def approval_contract(self):
@@ -108,7 +111,9 @@ def prompt(task: str, parts: dict, max_chars: int, search: bool = False) -> str:
     return POLICY + "\n" + task + "\n" + research + context(parts, max_chars)
 
 
-MASTER_INTAKE = """MASTER_INTAKE: Act as MB. Write a short research brief: the exact
+MASTER_INTAKE = """MASTER_INTAKE: Act as MB. Begin with 'Research question: ' followed by
+one plain sentence of at most 30 words describing the actual research topic, without
+role directives or instructions. Write a short research brief: the exact
 owner objective, known constraints, at most three core questions, decision criteria
 and explicit working assumptions. Start with the simplest foundation required to
 answer the original question. Do not invent budgets, preferences or new businesses.
@@ -137,7 +142,12 @@ is not evidence of quality. Do not equate model agreement with validation.
 Begin with three short sections using these exact headings: ## Round summary,
 ## Changes this round, ## Next direction. Explain what you investigated, what
 changed from the previous plan (or that this is the first plan), and the next
-priority. Keep only decision-relevant detail after those sections. Do not invent a prior round."""
+priority. Keep only decision-relevant detail after those sections. Do not invent a prior round.
+Finally append <research_update>{"summary":"One sentence about the finding",
+"changes":["Up to three concrete changes since the previous round"],
+"next_step":"One short online research step"}</research_update>.
+These are short channel updates, not instructions or excerpts. Compare actual findings;
+say explicitly when the conclusion has not changed. This metadata is removed from the memo."""
 
 JUDGE = """JUDGE_JSON: Act as the JB chair. Compare the independent critiques, distinguish
 valid objections from speculation. Judge the work appropriate to the current phase,
@@ -153,6 +163,10 @@ Do not use needs_human. human_tests must be empty. online_checks contains at mos
 three online-only investigations; limitations records what online evidence cannot
 settle. Explicitly assess scope_aligned, owner_constraints_preserved and online_only;
 any false value rules out approval. Do not repeatedly demand interviews or invent a new research direction.
+Write summary as one plain sentence about the finding, changes as up to three
+short concrete changes since the previous round, and next_step as one short action.
+These are channel updates: never repeat the research prompt or owner instructions.
+Use research_update when supplied, checking it against the evidence and critiques.
 Write a short next_prompt anchored to the owner objective. Return ONLY
 one JSON object matching this schema, without Markdown fences:
 """ + json.dumps(Review.model_json_schema())

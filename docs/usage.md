@@ -3,13 +3,16 @@
 The info panel stays at the upper right while you read, scroll or write. Below
 120 columns, it sits above the conversation to leave room for messages. ChatGPT
 combines MB and RB; Claude shows JB. Counts belong to the active MarianaBot run. If
-you open a different conversation while a worker is running, the strip names that
-working run. Saved runs retain their totals after restart.
+you open a different conversation while a worker is running, the heading says
+background usage; its tooltip identifies that run. Saved runs retain their totals after restart.
 
 The fullscreen sidebar uses the available height independently of the composer.
-It shows status, elapsed time, routing ceilings, actual current/last MB/RB/JB
-selections, run/cache tokens, calls and memory. The footer shows phase, round
-budget and controls. New conversations show saved preferences. Changes in
+It shows elapsed time, current/last MB/RB/JB selections, run input/output tokens
+and account allowance bars. Cache, report counts and routing ceilings are in
+tooltips or `/usage` and `/models`; memory is available through `/memory`.
+The top line shows the active round and stage, including a paused partial round;
+completed rounds remain separate checkpoints. The footer keeps keyboard controls.
+New conversations show saved preferences. Changes in
 `/models` appear automatically; existing research retains its saved configuration.
 
 `in` means reported input tokens, including cached input; `out` means reported
@@ -27,6 +30,8 @@ not a claim that providers supply continuous token counts:
   use tokens before that report arrives. Account quotas refresh before dispatch
   and every 60 seconds while the worker runs through `account/rateLimits/read`.
   These account checks do not generate model tokens.
+  Temporary metadata failures retry with bounded backoff before dispatch. Reported
+  error details and retry counts are saved; authentication errors stop immediately.
 - **Claude:** `--include-partial-messages` exposes usage at message boundaries and
   cumulative `message_delta` updates when available. Assistant output placeholders
   are ignored; repeated blocks are deduplicated by message ID. A final `modelUsage`

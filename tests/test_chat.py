@@ -61,11 +61,13 @@ async def test_fullscreen_shows_actual_models_all_windows_and_stable_sidebar(tmp
         await pilot.pause()
         models = str(app.query_one("#usage-models").content)
         assert "claude-sonnet-5 / medium" in models
-        assert "claude-opus-5-5" in str(app.query_one("#routing-summary").content)
+        assert "claude-opus-5-5" in app.query_one("#usage-models").tooltip
+        assert not app.query("#routing-summary") and not app.query("#usage-notes")
         quotas = str(app.query_one("#limit-anthropic").content)
         assert quotas.index("5h") < quotas.index("7d") and "Opus 7d" in quotas
         assert "Subscriptions" not in str(app.query_one("#status-line").content)
-        assert "/pause" in str(app.query_one("#research-footer").content)
+        assert not app.query("#research-footer")
+        assert "Round 0/24" in str(app.query_one("#status-line").content)
         panel = app.query_one("#usage-strip").region
         app.query_one(Composer).load_text("Feedback\n" * 12)
         await pilot.pause()
@@ -272,7 +274,7 @@ async def test_usage_follows_background_work_and_stays_visible_while_reading_and
             other_id = writer.begin_call(run_id, "jb", "JB", "anthropic", "fixture")
             await pilot.pause(1)
             assert "— in" in str(app.query_one("#usage-openai").content)
-            assert "1 active" in str(app.query_one("#usage-openai").content)
+            assert "RB limit" in app.query_one("#usage-models").tooltip
             assert "not reported" in str(app.query_one("#limit-anthropic").content)
             writer.record_usage(
                 call_id,
@@ -331,7 +333,7 @@ async def test_usage_follows_background_work_and_stays_visible_while_reading_and
             assert app.query_one("#conversation").region.height >= 6
             await app.new_conversation(False)
             await pilot.pause(1)
-            assert run_id in str(app.query_one("#usage-scope").content)
+            assert run_id in app.query_one("#usage-scope").tooltip
             assert "12,000 in" in str(app.query_one("#usage-openai").content)
             app.manager.record = None
             await app.open_run(run_id)

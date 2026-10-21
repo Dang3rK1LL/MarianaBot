@@ -24,6 +24,7 @@ from marianabot.memory import (
     size,
 )
 from marianabot.model_catalog import parse_models
+from marianabot.presentation import update_metadata
 from marianabot.prompts import (
     JB_ROLES,
     JUDGE,
@@ -200,9 +201,32 @@ class Engine:
 
     async def refresh_account(self, include_models=False):
         async with self.account_lock:
-            account = await self.account.snapshot(include_models=include_models)
-            self.limits["openai"].codex(account["limits"])
-            return account
+            for attempt in range(self.config.research.max_retries + 1):
+                try:
+                    account = await self.account.snapshot(include_models=include_models)
+                    self.limits["openai"].codex(account["limits"])
+                    if attempt:
+                        self.emit("Codex usage connection restored", kind="account_check_recovered")
+                    return account
+                except ClientError as exc:
+                    retrying = exc.retryable and attempt < self.config.research.max_retries
+                    self.emit(
+                        str(exc),
+                        kind="account_check_failed",
+                        payload={
+                            "error": str(exc),
+                            "diagnostics": exc.diagnostics,
+                            "retrying": retrying,
+                            "attempt": attempt + 1,
+                        },
+                    )
+                    if not retrying:
+                        if attempt:
+                            final = ClientError(f"{exc} (after {attempt + 1} usage-check attempts)")
+                            final.diagnostics = exc.diagnostics | {"attempts": attempt + 1}
+                            raise final from exc
+                        raise
+                    await self.wait(min(30, 2**attempt * 3), "Retrying Codex usage check")
 
     async def monitor_usage(self, interval=60):
         """Refresh account quotas during long calls/waits, without generating model tokens."""
@@ -390,6 +414,8 @@ class Engine:
                         result = await client.complete(call_content, actual_search)
                     result["elapsed_seconds"] = time.monotonic() - request_started
                     result["selection_reason"] = selection.reason
+                    if task.endswith("-synthesis"):
+                        result["text"], result["update"] = update_metadata(result["text"])
                     self.validate_output(
                         result,
                         words,
@@ -666,12 +692,14 @@ class Engine:
                 number,
                 agents=self.config.jb.agents,
                 plan=synthesis["text"],
+                update=synthesis.get("update", {}),
                 roles=[JB_ROLES[i % len(JB_ROLES)] for i in range(self.config.jb.agents)],
             )
             judging = {
                 "problem": run["problem"],
                 "brief": run["brief"],
                 "plan": synthesis["text"],
+                "research_update": synthesis.get("update", {}),
                 "previous_review": previous.get("review", {}),
                 "phase": phase,
             }
@@ -693,6 +721,7 @@ class Engine:
                 number,
                 agents=len(critics),
                 critiques=[r["text"][:400] for r in critics],
+                update=synthesis.get("update", {}),
             )
             chair = await self.call(
                 "JB",
@@ -701,6 +730,11 @@ class Engine:
                 judging | {"independent_critiques": [r["text"] for r in critics]},
                 structured=True,
             )
+            for key in ("summary", "changes", "next_step"):
+                if not chair["review"].get(key):
+                    chair["review"][key] = synthesis.get("update", {}).get(
+                        key, [] if key == "changes" else ""
+                    )
             self.store.save_round(
                 self.run_id, number, run["revision"], synthesis["text"], chair["review"]
             )
@@ -745,7 +779,14 @@ class Engine:
                 else f"Local {type(exc).__name__}; inspect installation and configuration"
             )
             self.store.update_run(self.run_id, status="paused", reason=message)
-            self.emit(message)
+            self.emit(
+                message,
+                kind="research_error",
+                payload={
+                    "error": message,
+                    "diagnostics": exc.diagnostics if isinstance(exc, ClientError) else {},
+                },
+            )
         except asyncio.CancelledError:
             self.store.update_run(self.run_id, status="paused", reason="Worker cancelled")
             raise

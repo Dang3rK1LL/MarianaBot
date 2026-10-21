@@ -149,7 +149,7 @@ async def test_recap_and_help_use_saved_output_without_model_calls(bridge):
     bridge.store.begin_call(run_id, "round-2-revision-0-rb-0", "RB", "openai", "fixture")
     result = await command(bridge, "recap", "2", run_id=run_id)
     assert run_id in result and "Reduced pilot size" in result
-    assert "Run tokens" in result and "partial" not in result
+    assert "Round tokens" in result and "partial" not in result
     assert "/mariana stop" in await command(bridge, "help", "3")
     assert not bridge.manager.starts
 
@@ -203,10 +203,10 @@ async def test_auto_follow_keeps_each_research_when_several_finish_between_polls
         updates = [
             call.kwargs["embed"]
             for call in sent.call_args_list
-            if call.kwargs["embed"]["fields"][0]["value"] == run_id
+            if run_id in call.kwargs["embed"]["footer"]["text"]
         ]
         assert updates[0]["title"] == "Research created"
-        assert any(update["title"] == "Round 2 complete" for update in updates)
+        assert any(update["title"].startswith("Round 2 complete") for update in updates)
         assert any(update["title"].startswith("Research complete") for update in updates)
     assert automatic.watch()["run_id"] == ids[-1]
     before = sent.await_count
@@ -219,6 +219,7 @@ def review():
         score=70,
         verdict="revise",
         next_prompt="Interview five customers",
+        online_checks=["Check published competitor prices"],
         blocking_issues=["No customer evidence"],
         strengths=[],
         human_tests=[],
@@ -245,12 +246,13 @@ async def test_outbox_survives_failure_restart_and_unwatch(bridge):
     sent = AsyncMock()
     await restarted.deliver(sent)
     text = sent.call_args.args[0]
-    assert "Reduced pilot size" in text and "Interview five" in text
+    assert "Reduced pilot size" in text and "Check published competitor prices" in text
+    assert "Interview five" not in text
     assert "UNWATCHED SECRET" not in text
-    assert "Run tokens" in text and "Elapsed:" in text
+    assert "Round tokens" in text and "Elapsed" in text
     assert "compactions:" not in text and "native token window remaining" not in text
     assert len(text) <= 5800
-    assert sent.call_args.kwargs["embed"]["title"] == "Round 1 complete"
+    assert sent.call_args.kwargs["embed"]["title"].startswith("Round 1 complete")
     await restarted.deliver(sent)
     assert sent.await_count == 1
     store.message(run_id, "reply-fixture", "MB", "Reply", "An answer @everyone")
@@ -429,27 +431,33 @@ async def test_round_starts_are_ordered_with_recaps_and_survive_restart(bridge):
     round_messages = [
         body
         for body in bodies
-        if body.splitlines()[0]
-        in {"Round 1/2 started", "Round 1 complete", "Round 2/2 started", "Round 2 complete"}
+        if body.startswith(
+            (
+                "Round 1/2 · Researching",
+                "Round 1 complete",
+                "Round 2/2 · Researching",
+                "Round 2 complete",
+            )
+        )
     ]
     assert len(round_messages) == 4
-    assert round_messages[0].startswith("Round 1/2 started")
+    assert round_messages[0].startswith("Round 1/2 · Researching")
     assert round_messages[1].startswith("Round 1 complete")
-    assert round_messages[2].startswith("Round 2/2 started")
+    assert round_messages[2].startswith("Round 2/2 · Researching")
     assert round_messages[3].startswith("Round 2 complete")
     assert all(len(body) < 5800 for body in round_messages)
     assert all("Offline demo" in body for body in round_messages)
-    assert "Round:" in round_messages[1]
+    assert "Time: Round" in round_messages[1]
     titles = [body.splitlines()[0] for body in bodies]
-    assert titles[:7] == [
-        "Preparing the research brief",
+    assert titles[:6] == [
+        "Preparing research",
         "Research brief ready",
-        "Round 1/2 started",
-        "Round 1 · Plan synthesis",
-        "Round 1 · Independent critique",
+        "Round 1/2 · Researching",
+        "Round 1 · Combining findings",
+        "Round 1 · Reviewing evidence",
         "Round 1 · Review decision",
-        "Round 1 complete",
     ]
+    assert titles[6].startswith("Round 1 complete")
     before = len(bodies)
     restarted = DiscordBridge(store, bridge.config, Manager())
     restarted.collect()

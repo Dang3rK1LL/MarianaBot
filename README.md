@@ -128,9 +128,10 @@ stays paused. See the [daily-use guide](docs/laptop.md) and
 
 ## Usage and memory
 
-Fullscreen chat has a fixed sidebar with research status, elapsed time, model
-selections, run/cache tokens, calls, all reported allowance windows and reset
-times. A Refresh button updates limits; the footer shows phase and controls. Missing
+Fullscreen chat has a fixed sidebar with elapsed time, model selections,
+input/output tokens and allowance bars with reset times. Detailed counters and
+routing settings stay in `/usage` and `/models`. The header shows the active round
+and stage; the footer keeps keyboard controls. A Refresh button updates limits. Missing
 values stay unknown; incomplete totals are marked partial. This is provider
 telemetry, not a guaranteed live balance. Other apps share your allowance.
 

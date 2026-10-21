@@ -269,6 +269,37 @@ class Store:
             )
         ]
 
+    def progress(self, run_id: str) -> dict:
+        run = self.run(run_id)
+        started = self.db.execute(
+            "SELECT created,payload FROM events WHERE run_id=? AND kind='round_started' "
+            "AND json_extract(payload,'$.revision')=? ORDER BY id DESC LIMIT 1",
+            (run_id, run["revision"]),
+        ).fetchone()
+        number, since = run["round"], 0
+        if started:
+            number = max(number, json.loads(started["payload"]).get("number", number))
+            since = started["created"]
+        stage = "research" if number > run["round"] else "saved" if number else "intake"
+        call = self.db.execute(
+            "SELECT task,brain,state,created FROM calls WHERE run_id=? AND created>=? ORDER BY created DESC LIMIT 1",
+            (run_id, since),
+        ).fetchone()
+        if call and (number > run["round"] or call["state"] == "running"):
+            task = call["task"]
+            stage = (
+                "memory"
+                if task.startswith("memory-")
+                else "verdict"
+                if task.endswith("-verdict")
+                else "synthesis"
+                if task.endswith("-synthesis")
+                else "critique"
+                if "-jb-" in task or call["brain"] == "JB"
+                else "research"
+            )
+        return {"number": number, "completed": run["round"], "stage": stage}
+
     def cached(self, run_id: str, task: str):
         row = self.db.execute(
             "SELECT result FROM calls WHERE run_id=? AND task=? AND state='done' ORDER BY created DESC LIMIT 1",

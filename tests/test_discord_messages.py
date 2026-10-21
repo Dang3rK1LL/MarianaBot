@@ -50,7 +50,8 @@ def test_recap_handles_plans_without_stage_summaries():
             {},
         )
     )
-    assert "Plan excerpt" in text and "No separate change summary recorded" in text
+    assert "Finding" in text and "Pilot costs now have an explicit ceiling" in text
+    assert "Legacy plan" not in text and "Plan excerpt" not in text
     assert "@everyone" not in text
 
 
@@ -63,13 +64,13 @@ def test_recap_reports_actual_changes_online_checks_and_evidence_limits():
         make_review(score=71),
     )
     text = card_text(embed)
-    assert "+7 since previous round" in text
+    assert "(+7)" in text
     assert "Reduced the pilot from 20 customers to five" in text
     assert "No paid customer commitments" in text
-    assert "Next online checks" in text and "Compare published competitor prices" in text
-    assert "Evidence limitations" in text and "cannot establish willingness to pay" in text
+    assert "Next" in text and "Compare published competitor prices" in text
+    assert "Unverified" in text and "cannot establish willingness to pay" in text
     assert "Needs your input" not in text and "Ask three buyers" not in text
-    assert "Disagreements retained" in text
+    assert "Disagreements retained" not in text
     assert "Private extended detail" not in text
 
 
@@ -110,7 +111,7 @@ async def test_rich_adapter_enforces_limits_and_keeps_untrusted_formatting_liter
         await bot.send_update(card_text(embed), embed=embed)
         call = bot.destination.send.call_args
         assert len(call.args[0]) <= 1950
-        assert "**Round 1 complete**" in call.args[0]
+        assert "**Round 1 complete" in call.args[0]
         assert call.kwargs["suppress_embeds"]
         assert "embed" not in call.kwargs
     finally:
@@ -137,9 +138,9 @@ def test_round_token_snapshot_filters_team_calls_and_survives_later_usage(store)
     embed = recap_card(
         store.run(run_id), dict(number=1, plan="Saved plan", review=make_review()), payload
     )
-    tokens = next(field["value"] for field in embed["fields"] if field["name"] == "ChatGPT tokens")
-    assert "Round team: 501 in / 10 out" in tokens
-    assert "1,700 in / 30 out" in tokens
+    tokens = next(field["value"] for field in embed["fields"] if field["name"] == "Round tokens")
+    assert "ChatGPT: 501 in / 10 out" in tokens
+    assert "1,700" not in tokens
     assert "partial" not in tokens
 
 
@@ -158,9 +159,8 @@ def test_research_stage_cards_describe_actual_team_sizes_and_retrieval_setting()
             roles=["Market research", "Economics"],
         ),
     )
-    assert "4 independent proposals" in card_text(start)
-    assert "2 independent critiques" in card_text(start)
-    assert "Web search disabled" in card_text(start)
+    assert "Establish core facts" in card_text(start)
+    assert "Process" not in card_text(start) and "Models" not in card_text(start)
     critique = stage_card(
         run,
         dict(
@@ -173,7 +173,8 @@ def test_research_stage_cards_describe_actual_team_sizes_and_retrieval_setting()
     )
     assert "Demand remains uncertain" in card_text(critique)
     assert "Reduced fixed costs" in card_text(critique)
-    assert "Failure investigator" in card_text(critique)
+    assert "2 independent JB reviewers" in card_text(critique)
+    assert "Failure investigator" not in card_text(critique)
     assert "Wait" in card_text(
         wait_card(run, dict(reason="Claude subscription cooling down", seconds=1800))
     )
@@ -213,9 +214,9 @@ async def test_stage_resume_deduplication_and_batched_message_order(store):
     assert len(rows) == 120
     titles = [json.loads(row["embed"])["title"] for row in rows]
     assert titles[:4] == [
-        "Round 0 · Plan synthesis",
+        "Round 0 · Combining findings",
         "MB · Reply 0",
-        "Round 1 · Plan synthesis",
+        "Round 1 · Combining findings",
         "MB · Reply 1",
     ]
     restarted = DiscordBridge(store, settings)

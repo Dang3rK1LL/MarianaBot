@@ -26,10 +26,10 @@ from marianabot.config import Config, load_config, save_model_preferences
 from marianabot.greetings import STARTUP_GREETINGS
 from marianabot.limits import SubscriptionLimits
 from marianabot.models_ui import ModelsScreen
+from marianabot.presentation import STAGES
 from marianabot.reports import export_run
-from marianabot.routing import phase_for
 from marianabot.store import Store
-from marianabot.usage_ui import UsageStrip, duration
+from marianabot.usage_ui import UsageStrip
 from marianabot.worker import WorkerManager, atomic_json
 from marianabot.workspaces_ui import WorkFolderScreen
 
@@ -306,7 +306,6 @@ class MarianaChat(App):
                     with Horizontal(id="input-tools"):
                         yield Static("Enter send · Alt+Enter newline · / commands", id="input-hint")
                         yield Button("Send ↵", id="send")
-                yield Static("", id="research-footer", markup=False)
         yield Footer()
 
     async def on_mount(self):
@@ -353,10 +352,10 @@ class MarianaChat(App):
     def usage_error(self):
         return "\n".join(error for error in self.usage_errors.values() if error)
 
-    def usage_failed(self, provider):
+    def usage_failed(self, provider, error="Usage service unavailable"):
         label = "Codex" if provider == "openai" else "Claude"
         self.usage_errors[provider] = (
-            f"{label} refresh failed; showing the last reported snapshot. Check the client login and network, then use /usage to retry."
+            f"{label} refresh failed: {error}. Showing the last reported snapshot; /usage retries."
         )
 
     async def refresh_usage(self):
@@ -373,8 +372,8 @@ class MarianaChat(App):
                         account["limits"], observed=account.get("observed"), model=config.jb.model
                     )
                 self.usage_errors[provider] = ""
-            except (ClientError, OSError, ValueError):
-                self.usage_failed(provider)
+            except (ClientError, OSError, ValueError) as exc:
+                self.usage_failed(provider, str(exc))
             finally:
                 self.usage_pending.discard(provider)
                 if self.is_running and not self.exiting:
@@ -388,10 +387,10 @@ class MarianaChat(App):
                 refresh_provider("openai", CodexAccount),
                 refresh_provider("anthropic", ClaudeAccount),
             )
-        except (ClientError, OSError, ValueError):
+        except (ClientError, OSError, ValueError) as exc:
             # Retain the last successful snapshot and its original observation time.
             for provider in self.usage_errors:
-                self.usage_failed(provider)
+                self.usage_failed(provider, str(exc))
         finally:
             self.usage_refreshing = False
             self.usage_pending.clear()
@@ -890,7 +889,9 @@ class MarianaChat(App):
         status = "New conversation"
         if self.run_id:
             run = self.store.run(self.run_id)
-            status = f"{self.run_id} · {run['status'].capitalize()} · round {run['round']}"
+            progress = self.store.progress(self.run_id)
+            maximum = Config.model_validate_json(run["config"]).research.max_rounds
+            status = f"{self.run_id} · {run['status'].capitalize()} · Round {progress['number']}/{maximum} · {STAGES[progress['stage']]}"
             attached = active and active.get("run_id") == self.run_id
             if run["status"] == "running" and not attached:
                 status = f"{self.run_id} · Worker disconnected · /resume to reconnect"
@@ -918,45 +919,10 @@ class MarianaChat(App):
                     await self.sync_messages()
                     if not self.is_running or self.exiting:
                         return
-            activity = self.store.activity(self.run_id)
-            busy = []
-            for brain, label in (
-                ("MB", "MB replying"),
-                ("RB", "RB researching"),
-                ("JB", "JB reviewing"),
-            ):
-                working = (
-                    sum(
-                        a["count"]
-                        for a in activity
-                        if a["brain"] == brain and a["state"] == "running"
-                    )
-                    if attached
-                    else 0
-                )
-                if working:
-                    if brain == "MB" and any(
-                        a["state"] == "running" and a.get("compacting")
-                        for a in activity
-                        if a["brain"] == "MB"
-                    ):
-                        label = "MB compacting"
-                    busy.append(label + (f" ({working})" if working > 1 else ""))
-            if busy:
-                status += " · " + " · ".join(busy)
         else:
             if active:
                 status += " · another session working · /sessions"
         self.chat_screen.query_one("#status-line", Static).update(status)
-        if self.run_id:
-            run = self.store.run(self.run_id)
-            run_config = Config.model_validate_json(run["config"])
-            phase = phase_for(self.store.rounds(self.run_id), run["revision"])
-            footer = f"{phase.capitalize()} · online only · elapsed {duration(time.time() - run['created'])} · round {run['round']} / {run_config.research.max_rounds}"
-            footer += "\nFeedback applies next round · /ask question · /pause · /resume · /export"
-        else:
-            footer = "Online research · foundation → validation → decision\nEnter your objective and constraints to begin"
-        self.chat_screen.query_one("#research-footer", Static).update(footer)
 
     @on(Button.Pressed, "#refresh-usage")
     def refresh_usage_button(self):

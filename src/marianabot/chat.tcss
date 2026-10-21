@@ -11,16 +11,15 @@ Screen { background: #171d24; color: #d9e0e4; }
 #welcome-copy { height: auto; color: #a6afb8; }
 #usage-strip { dock: top; height: 4; padding: 0 2; scrollbar-size: 1 1; }
 #usage-strip Static { height: auto; }
-#workspace.wide #usage-strip { dock: right; width: 36%; min-width: 48; max-width: 80; height: 1fr; border-left: solid #46545e; padding: 1 2; background: #202932; }
+#workspace.wide #usage-strip { dock: right; width: 30%; min-width: 42; max-width: 66; height: 1fr; border-left: solid #46545e; padding: 1 2; background: #202932; }
 #usage-heading { height: 1; margin-bottom: 1; }
 #usage-scope { width: 1fr; }
 #refresh-usage { height: 1; width: 9; min-width: 9; border: none; background: #202932; color: #92c9cb; }
 #refresh-usage:hover, #refresh-usage:focus { background: #92c9cb; color: #171d24; }
-#research-overview, #routing-summary, #usage-models, #limit-openai, #limit-anthropic { margin-bottom: 1; }
-#workspace.narrow #usage-heading, #workspace.narrow #research-overview, #workspace.narrow #routing-summary, #workspace.narrow #usage-models, #workspace.narrow #usage-notes { display: none; }
+#research-overview, #usage-models, #limit-openai, #limit-anthropic { margin-bottom: 1; }
+#workspace.narrow #usage-heading, #workspace.narrow #research-overview, #workspace.narrow #usage-models { display: none; }
 #workspace.narrow #limit-openai, #workspace.narrow #limit-anthropic { margin: 0; }
 #workspace.narrow #usage-strip { overflow-y: hidden; }
-#usage-notes { color: #a6afb8; }
 #usage-scope { color: #a6afb8; }
 .message { height: auto; margin-bottom: 2; }
 .speaker { height: auto; margin-bottom: 1; color: #92c9cb; text-style: bold; }
@@ -38,8 +37,6 @@ CollapsibleTitle { color: #92c9cb; }
 #suggestions > .option-list--option-highlighted { background: #92c9cb; color: #171d24; }
 #input-tools { height: 1; }
 #input-hint { width: 1fr; height: 1; color: #a6afb8; }
-#research-footer { height: 2; padding: 0 2; color: #a6afb8; background: #202932; }
-#workspace.narrow #research-footer { height: 1; }
 #send { height: 1; min-width: 8; background: #202932; color: #92c9cb; border: none; }
 #send:hover, #send:focus { background: #92c9cb; color: #171d24; }
 Footer { background: #171d24; color: #a6afb8; padding: 0 2; }

@@ -97,16 +97,14 @@ def quota_line(data: dict, *, demo=False, now=None) -> Text:
 class UsageStrip(VerticalScroll):
     def compose(self) -> ComposeResult:
         with Horizontal(id="usage-heading"):
-            yield Static("Research & usage", id="usage-scope", markup=False)
+            yield Static("Usage", id="usage-scope", markup=False)
             yield Button("Refresh", id="refresh-usage")
         yield Static("", id="research-overview", markup=False)
-        yield Static("", id="routing-summary", markup=False)
         yield Static("", id="usage-models", markup=False)
         yield Static("", id="usage-openai", markup=False)
         yield Static("", id="limit-openai", markup=False)
         yield Static("", id="usage-anthropic", markup=False)
         yield Static("", id="limit-anthropic", markup=False)
-        yield Static("", id="usage-notes", markup=False)
 
     def update_usage(
         self,
@@ -125,83 +123,48 @@ class UsageStrip(VerticalScroll):
     ):
         now = time.time() if now is None else now
         wide = self.app.size.width >= 120
-        self.query_one("#usage-scope", Static).update(scope + " · usage")
-        overview = "No active research\nChoose an objective and a work folder to begin."
-        if run:
-            overview = f"{run['id']}\n{run['status'].capitalize()} · round {run['round']}\nElapsed {duration(now - run['created'])} · includes waits"
-            if run.get("reason"):
-                overview += "\n" + run["reason"]
-        self.query_one("#research-overview", Static).update(overview)
-        route = (
-            "Adaptive routing"
-            if config and config.routing.mode == "adaptive"
-            else "Fixed research models"
+        self.query_one("#usage-scope", Static).update(
+            "Usage · background" if scope.startswith("Working run") else "Usage"
         )
-        route += " · online validation only"
+        self.query_one("#usage-scope", Static).tooltip = (
+            scope + "; tokens for this research, account allowance shown as used."
+        )
+        overview = self.query_one("#research-overview", Static)
+        overview.update(f"Elapsed {duration(now - run['created'])}" if run else "")
+        overview.tooltip = "Elapsed time includes pauses and waits."
+        models = Text("Models", style=MUTED)
         if config:
-            route += f"\nRB ceiling: {config.rb.model} / {config.rb.effort}\nJB ceiling: {config.jb.model} / {config.jb.effort}"
-        self.query_one("#routing-summary", Static).update(route)
-        models = Text(style=MUTED)
-        if config is None:
-            models.append("Models unavailable · check /models", style=ATTENTION)
-        else:
-            models.append("Current / last selected models", style=MUTED)
             for label, brain in (("MB", config.mb), ("RB", config.rb), ("JB", config.jb)):
                 selected = (selections or {}).get(label)
                 model = selected["model"] if selected else brain.model
-                effort = (
-                    selected.get("effort") or "unknown (older call)" if selected else brain.effort
-                )
-                models.append(
-                    f"\n{label:<3}{model} / {'default' if effort == 'auto' else effort}", style=TEXT
-                )
-                if not selected and config.routing.mode == "adaptive" and label != "MB":
-                    models.append(" (ceiling)", style=MUTED)
-        model_widget = self.query_one("#usage-models", Static)
-        model_widget.update(models)
-        model_widget.tooltip = models.plain
-        for provider, label in (("openai", "ChatGPT MB+RB"), ("anthropic", "Claude  JB")):
+                effort = (selected.get("effort") or "unknown") if selected else brain.effort
+                models.append(f"\n{label:<3}{model} / {effort}", style=TEXT)
+        widget = self.query_one("#usage-models", Static)
+        widget.update(models)
+        widget.tooltip = "Latest model and effort used. Configuration and routing are in /models."
+        if config:
+            widget.tooltip += f"\nRB limit: {config.rb.model} / {config.rb.effort}; JB limit: {config.jb.model} / {config.jb.effort}"
+        for provider, label in (("openai", "ChatGPT"), ("anthropic", "Claude")):
             row = totals.get(provider, {})
             calls = row.get("calls", 0)
-            count = row.get("active", 0) if working else 0
-            incoming = (
-                f"{row.get('input_tokens', 0):,}" if row.get("input_reports") or not calls else "—"
-            )
-            outgoing = (
-                f"{row.get('output_tokens', 0):,}"
-                if row.get("output_reports") or not calls
+            counts = [
+                f"{row.get(kind + '_tokens', 0):,}"
+                if row.get(kind + "_reports") or not calls
                 else "—"
-            )
-            line = Text(f"{label}\n" if wide else f"{label:<14}", style=TEXT)
-            line.append(f" {incoming} in  /  {outgoing} out", style=TEXT)
-            if count:
-                state = f"{count} active"
-                if row.get("incomplete"):
-                    state += " · partial"
-            elif row.get("incomplete"):
-                state = "partial totals"
-            else:
-                state = "idle" if working else "saved" if calls else "idle"
-            line.append(f"\n{state}" if wide else f"  ·  {state}", style=MUTED)
-            if wide:
-                line.append(
-                    f"\nRun calls {calls:,} · usage reported {row.get('reported_calls', 0):,}",
-                    style=MUTED,
-                )
-                line.append(
-                    f"\nCache {row.get('cache_read_tokens', 0):,} read / {row.get('cache_write_tokens', 0):,} write",
-                    style=MUTED,
-                )
-                line.append(f"\nToken report {age(row.get('reported_at'), now)}", style=MUTED)
-            else:
+                for kind in ("input", "output")
+            ]
+            line = Text(f"{label}\n" if wide else f"{label:<9}", style=TEXT)
+            line.append(f"{counts[0]} in · {counts[1]} out", style=MUTED)
+            if row.get("incomplete"):
+                line.append(" · partial", style=ATTENTION)
+            if not wide:
                 line.truncate(max(1, self.content_size.width), overflow="ellipsis")
             widget = self.query_one(f"#usage-{provider}", Static)
             widget.update(line)
             widget.tooltip = (
-                f"Reported input: {incoming}; output: {outgoing}. Input includes cache.\n"
-                f"Cache read: {row.get('cache_read_tokens', 0):,}; cache write: {row.get('cache_write_tokens', 0):,}.\n"
-                f"{row.get('reported_calls', 0)} of {calls} calls have usage reports. Last report: {age(row.get('reported_at'), now)}.\n"
-                "Counts belong to this MarianaBot run, not other apps using your subscriptions."
+                f"Tokens for this research; input includes cache.\n"
+                f"Cache: {row.get('cache_read_tokens', 0):,} read / {row.get('cache_write_tokens', 0):,} written.\n"
+                f"{row.get('reported_calls', 0)} / {calls} calls reported usage; last report {age(row.get('reported_at'), now)}."
             )
             quota = self.query_one(f"#limit-{provider}", Static)
             quota_text = (
@@ -212,30 +175,27 @@ class UsageStrip(VerticalScroll):
             state = (refresh or {}).get(provider)
             if state and not demo:
                 quota_text.append(
-                    " · " + state,
-                    style=ATTENTION if state == "refresh failed" else MUTED,
+                    " · " + state, style=ATTENTION if state == "refresh failed" else MUTED
                 )
             if not wide:
                 quota_text.truncate(max(1, self.content_size.width), overflow="ellipsis")
             quota.update(quota_text)
-            quota.tooltip = "Allowance percentages are used, not remaining.\n" + "\n".join(
-                quota_line({**limits.get(provider, {}), "windows": [window]}, now=now).plain.strip()
-                for window in limits.get(provider, {}).get("windows", [])
+            quota.tooltip = (
+                "Account allowance used. Reset times are reported by the provider.\n"
+                + "\n".join(
+                    quota_line(
+                        {**limits.get(provider, {}), "windows": [window]}, now=now
+                    ).plain.strip()
+                    for window in limits.get(provider, {}).get("windows", [])
+                )
             )
-        notes = "Tokens are for this run; input includes cache.\nAllowance is account-wide and shown as used."
-        if memory:
-            notes += (
-                f"\nMemory: {len(memory['text']):,} chars · through round {memory['through_round']}"
-            )
-        notes += "\nFeedback stays verbatim; full work is archived.\n/models settings · /usage full report · /memory"
-        self.query_one("#usage-notes", Static).update(notes)
 
 
 def quota_details(data: dict, *, demo=False, now=None) -> Text:
     now = time.time() if now is None else now
     if demo or not data.get("windows"):
         return quota_line(data, demo=demo, now=now)
-    text = Text("Account allowance used", style=MUTED)
+    text = Text(style=MUTED)
     windows = sorted(
         data["windows"],
         key=lambda w: (
@@ -244,30 +204,22 @@ def quota_details(data: dict, *, demo=False, now=None) -> Text:
             window_label(w),
         ),
     )
-    for window in windows:
+    for index, window in enumerate(windows):
         percent = window.get("percent")
-        label = window_label(window)
         reset = finite(window.get("reset"))
         style = ATTENTION if finite(percent) >= 95 or (reset and reset <= now) else MUTED
-        if percent is None:
-            bar, used = "·" * 12, str(window.get("status", "unknown"))
-        else:
-            filled = min(12, max(0, int(finite(percent) * 12 / 100)))
-            bar, used = "━" * filled + "─" * (12 - filled), f"{finite(percent):3.0f}%"
-        text.append(f"\n{label:<10}{bar} {used}", style=style)
+        filled = min(10, max(0, int(finite(percent) / 10)))
+        bar = "━" * filled + "─" * (10 - filled)
+        used = f"{finite(percent):3.0f}%" if percent is not None else "  ? "
+        reset_text = duration(reset - now) if reset > now else "refresh due" if reset else ""
         text.append(
-            "\n"
-            + (
-                f"  Reset in {duration(reset - now):<10}"
-                if reset > now
-                else "  Reset passed · refresh due"
-                if reset
-                else "  Reset not reported"
-            ),
+            ("\n" if index else "")
+            + f"{window_label(window):<10}{bar} {used}"
+            + (f" · {reset_text}" if reset_text else ""),
             style=style,
         )
     wait = finite(data.get("until")) - now
     if wait > 0:
         text.append(f"\nWaiting {duration(wait)}", style=ATTENTION)
-    text.append(f"\nLimits checked {age(data.get('observed'), now)}", style=MUTED)
+    text.append(f"\nUpdated {age(data.get('observed'), now)}", style=MUTED)
     return text

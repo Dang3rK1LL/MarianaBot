@@ -18,6 +18,7 @@ from marianabot.discord_messages import (
     state_card,
     wait_card,
 )
+from marianabot.presentation import STAGES, research_brief
 from marianabot.store import Store
 from marianabot.usage_ui import duration, quota_line
 from marianabot.worker import WorkerManager
@@ -44,10 +45,11 @@ def status_text(store: Store, run_id: str, *, now: float | None = None) -> str:
     memory = store.db.execute(
         "SELECT LENGTH(text) FROM research_memory WHERE run_id=?", (run_id,)
     ).fetchone()
+    progress = store.progress(run_id)
     lines = [
-        f"Run {run_id} · {run['status']} · round {run['round']}",
+        f"Run {run_id} · {run['status']} · Round {progress['number']} · {STAGES[progress['stage']]}",
         f"Elapsed since creation: {duration(now - run['created'])} (includes waits/pauses)",
-        f"RB/MB: {config.rb.model} / {config.rb.effort}; JB: {config.jb.model} / {config.jb.effort}",
+        f"MB: {config.mb.model} / {config.mb.effort}; RB limit: {config.rb.model} / {config.rb.effort}; JB limit: {config.jb.model} / {config.jb.effort}",
     ]
     if run["reason"]:
         lines.append("State: " + excerpt(run["reason"], 160))
@@ -73,7 +75,9 @@ def status_text(store: Store, run_id: str, *, now: float | None = None) -> str:
 
 def usage_snapshot(store: Store, run_id: str) -> dict:
     return dict(
-        usage=store.usage_totals(run_id), elapsed=time.time() - store.run(run_id)["created"]
+        usage=store.usage_totals(run_id),
+        elapsed=time.time() - store.run(run_id)["created"],
+        progress=store.progress(run_id),
     )
 
 
@@ -295,11 +299,11 @@ class DiscordBridge:
             )
         if action == "sessions":
             rows = self.store.db.execute(
-                "SELECT id,status,round,SUBSTR(problem,1,90) AS problem FROM runs ORDER BY created DESC LIMIT 12"
+                "SELECT * FROM runs ORDER BY created DESC LIMIT 12"
             ).fetchall()
             return (
                 "\n".join(
-                    f"{r['id']} · {r['status']} · round {r['round']} · {excerpt(r['problem'], 90)}"
+                    f"{r['id']} · {r['status']} · round {self.store.progress(r['id'])['number']} · {research_brief(dict(r))}"
                     for r in rows
                 )
                 or "No saved research. Start a problem in MarianaBot first."

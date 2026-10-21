@@ -164,16 +164,32 @@ class CodexAccount:
             while True:
                 line = await process.stdout.readline()
                 if not line:
-                    raise ClientError("Codex account service closed before responding")
+                    raise ClientError(
+                        "Codex account service closed before responding", retryable=True
+                    )
                 try:
                     event = json.loads(line)
                 except ValueError:
                     continue
                 if event.get("id") == request_id:
                     if "error" in event:
-                        raise ClientError(
-                            f"Codex {method} failed; check login, network and CLI version"
+                        info = event["error"]
+                        failure = error_from(json.dumps({"error": info}))
+                        code = info.get("code") if isinstance(info, dict) else None
+                        detail = diagnostic(
+                            str(info.get("message", info) if isinstance(info, dict) else info)
                         )
+                        transient = (
+                            failure.retryable
+                            or failure.limited
+                            or (
+                                code in (-32603, -32000)
+                                and str(failure).startswith("Client request failed")
+                            )
+                        )
+                        error = ClientError(f"Codex {method} failed: {detail}", retryable=transient)
+                        error.diagnostics = failure.diagnostics | {"method": method}
+                        raise error
                     return event.get("result", {})
 
         try:

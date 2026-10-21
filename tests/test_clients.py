@@ -182,6 +182,35 @@ def stream_process(events, *, code=0, stderr=""):
     )
 
 
+@pytest.mark.parametrize(
+    "code,message,retryable",
+    [
+        (-32000, "HTTP 503 temporarily unavailable; bearer private-secret", True),
+        (-32000, "HTTP 401 unauthorized", False),
+        (-32601, "Method not found", False),
+    ],
+)
+async def test_codex_rpc_errors_keep_reported_cause_and_classification(
+    config, tmp_path, monkeypatch, code, message, retryable
+):
+    process = stream_process(
+        [
+            {"id": 1, "result": {}},
+            {"id": 2, "result": {"account": {"type": "chatgpt"}}},
+            {"id": 3, "error": {"code": code, "message": message}},
+        ]
+    )
+    monkeypatch.setattr(clients, "executable", lambda _: ["fixture"])
+    monkeypatch.setattr(clients, "launch", AsyncMock(return_value=process))
+    with pytest.raises(ClientError) as caught:
+        await CodexAccount(config, tmp_path).snapshot()
+    error = caught.value
+    assert error.retryable is retryable
+    assert "account/rateLimits/read" in str(error)
+    assert error.diagnostics["error"]["code"] == str(code)
+    assert "private-secret" not in str(error) + json.dumps(error.diagnostics)
+
+
 async def test_claude_execution_error_retries_and_preserves_partial_history_and_usage(
     fake_clients, config, store, monkeypatch, tmp_path
 ):
