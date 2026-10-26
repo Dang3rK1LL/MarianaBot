@@ -67,7 +67,7 @@ class WorkerManager:
                 return record
             return {"state": "running", "run_id": None, "mode": "external"}
 
-    async def start(self, run_id: str, *, messages_only: bool = False) -> bool:
+    async def start(self, run_id: str, *, messages_only: bool = False, guided_ready=False) -> bool:
         """Launch and await the lock handshake, without blocking the chat event loop."""
         launch_lock = FileLock(str(self.directory / "launch.lock"), timeout=0)
         try:
@@ -75,6 +75,19 @@ class WorkerManager:
         except Timeout as exc:
             raise ValueError("A worker is starting. Try again in a moment.") from exc
         try:
+            store = Store(self.directory)
+            try:
+                run = store.run(run_id)
+                if run["demo"]:
+                    raise ValueError("Historical simulated records are read-only")
+                if not messages_only and run["status"] in ("complete", "stopped"):
+                    raise ValueError("This research run is closed")
+                if not messages_only and store.guidance(run_id, run["round"] + 1, pending=True):
+                    raise ValueError("Answer the pending round questions before resuming")
+                if guided_ready and (run["status"] != "awaiting_answers" or run["control"]):
+                    return False
+            finally:
+                store.close()
             active = self.active()
             if active and active.get("run_id") == run_id and not messages_only:
                 store = Store(self.directory)
@@ -107,6 +120,7 @@ class WorkerManager:
                 "state": "starting",
                 "mode": "messages" if messages_only else "research",
                 "started": time.time(),
+                "control_epoch": run["control_epoch"],
             }
             atomic_json(self.metadata, record)
             command = [
@@ -164,6 +178,29 @@ class WorkerManager:
         finally:
             launch_lock.release()
 
+    async def continue_guided(self, run_id: str) -> bool:
+        for _ in range(200):
+            store = Store(self.directory)
+            try:
+                run = store.run(run_id)
+                if (
+                    run["status"] != "awaiting_answers"
+                    or run["control"]
+                    or store.guidance(run_id, run["round"] + 1, pending=True)
+                ):
+                    return False
+            finally:
+                store.close()
+            active = self.active()
+            if not active:
+                return await self.start(run_id, guided_ready=True)
+            if active.get("run_id") != run_id:
+                raise ValueError(
+                    "Answers saved; another research owns the worker. Use /resume when it is free"
+                )
+            await asyncio.sleep(0.1)
+        raise ValueError("Answers saved; the earlier worker is still exiting. Use /resume shortly")
+
 
 async def execute(store: Store, run_id: str, messages_only: bool):
     engine = Engine(store, run_id, messages_only=messages_only)
@@ -206,6 +243,13 @@ def main():
     try:
         with FileLock(str(store.directory / "worker.lock"), timeout=0):
             run = store.run(args.run_id)
+            launch_record = WorkerManager(store.directory).read()
+            if (
+                launch_record.get("token") == args.token
+                and launch_record.get("control_epoch", run["control_epoch"]) != run["control_epoch"]
+            ):
+                atomic_json(metadata, record | {"state": "finished"})
+                return
             if not args.messages_only and run["status"] in ("complete", "stopped"):
                 raise ValueError("This research run is closed")
             try:

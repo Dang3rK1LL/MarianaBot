@@ -52,7 +52,7 @@ def configure(path: Path, directory: Path, console: Console):
     console.print(Text(f"Research data: {directory.resolve()}"))
     console.print("Existing research keeps its saved model choices.")
     if not overage:
-        console.print("Live research is locked. You can still use mariana chat --demo.")
+        console.print("Live research stays locked until subscription setup is complete.")
     console.print(
         "\nSign in with codex login and claude auth login --claudeai, then run mariana doctor.\n"
         "Open chat with mariana. You can change models later with /models."

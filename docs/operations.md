@@ -18,16 +18,20 @@ clarifications with steer.
 ~~~text
 mariana new --problem-file examples/problem.md
 mariana new --problem-file examples/problem.md --work-folder ~/MarianaBot-work
+mariana new --problem-file examples/problem.md --mode guided --questions 3
 mariana run RUN_ID
 ~~~
 
-Creating a run stores the problem and configuration without inference.
+Creating a run stores the problem and configuration without inference. Choose
+Automatic or Guided mode at creation; guided runs wait for real owner answers
+before each round. `--mode guided --questions 3` makes that choice explicit.
+Use `mariana questions RUN_ID` and `mariana answer RUN_ID R1Q1 "Your answer"`
+to view and answer pending questions. The last answer continues an unpaused run.
 Without `--work-folder`, `new` asks for a work folder before asking for the
 problem. It creates a unique `research-RUN_ID` child directory. Its `exports/`
 contains the report, history, conversation, memory and citations; its
-`client-workspace/` is isolated from other research runs. Demo runs use separate
-folders within their demo data directory. Existing runs keep their saved paths.
-Running it starts MB, then the research/review teams. The default limit is 24
+`client-workspace/` is isolated from other research runs. Existing runs keep their saved paths.
+Running it starts MB, then the research/review teams. The default limit is eight
 rounds or 72 elapsed hours, including quota waits.
 
 ## Watching and steering

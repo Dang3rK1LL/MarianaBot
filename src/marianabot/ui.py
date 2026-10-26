@@ -13,7 +13,7 @@ def dashboard(store: Store, run_id: str):
     run = store.run(run_id)
     calls = store.calls(run_id)
     rounds = store.rounds(run_id)
-    mode = "OFFLINE DEMO · no model calls" if run["demo"] else "SUBSCRIPTION MODE"
+    mode = "LIVE SUBSCRIPTION RESEARCH"
     title = Text("M A R I A N A B O T", style="bold bright_cyan")
     title.append(f"\n{mode}    {run_id}", style="dim")
     summary = Text(
@@ -46,10 +46,10 @@ def dashboard(store: Store, run_id: str):
     quotas.add_column("Last reported")
     quotas.add_column("Reset / next attempt (UTC)")
     for provider, name in (("openai", "MB + RB · ChatGPT"), ("anthropic", "JB · Claude")):
-        info = store.get_limits(provider) if not run["demo"] else {}
+        info = store.get_limits(provider)
         windows = info.get("windows", [])
         if not windows:
-            quotas.add_row(name, "Not reported" if not run["demo"] else "Demo", "—")
+            quotas.add_row(name, "Not reported", "—")
         for window in windows:
             percent = window.get("percent")
             reset = window.get("reset")

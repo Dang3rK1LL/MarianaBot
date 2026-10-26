@@ -18,7 +18,9 @@ def export_run(store: Store, run_id: str, target: Path) -> Path:
     rounds = store.rounds(run_id)
     commands = store.commands(run_id)
     calls = store.calls(run_id)
-    mode = "OFFLINE DEMO — illustrative fixtures only" if run["demo"] else "Subscription research"
+    mode = (
+        "Historical simulated record — read-only" if run["demo"] else "Live subscription research"
+    )
     report = [
         f"# MarianaBot · {run_id}",
         mode,
@@ -30,6 +32,21 @@ def export_run(store: Store, run_id: str, target: Path) -> Path:
     ]
     if rounds:
         last = rounds[-1]
+        if last["review"].get("deliverables"):
+            report += [
+                "## Deliverable coverage",
+                "\n".join(
+                    f"- {key}: {value}" for key, value in last["review"]["deliverables"].items()
+                ),
+            ]
+        if last["review"].get("guidance_application"):
+            report += [
+                "## How owner answers changed the work",
+                "\n".join(
+                    f"- {key}: {value}"
+                    for key, value in last["review"]["guidance_application"].items()
+                ),
+            ]
         report += [
             f"## Latest plan · round {last['number']}",
             last["plan"],
@@ -79,6 +96,8 @@ def export_run(store: Store, run_id: str, target: Path) -> Path:
                 "memory_pins": store.pins(run_id, active_only=False),
                 "compactions": store.compactions(run_id),
                 "conversation": store.messages(run_id),
+                "guidance": store.guidance(run_id),
+                "contract": json.loads(run.get("contract") or "{}"),
             },
             ensure_ascii=False,
             indent=2,

@@ -5,7 +5,7 @@ research from the CLI, launch the Discord bot, or open the Windows server
 shortcut. The server launcher checks the VPS installation before attaching to
 its terminal, and the terminal service checks at boot before recovering research.
 
-Checks are enabled by default. Demo mode, help, diagnostics, exports and status
+Checks are enabled by default. Help, diagnostics, exports and status
 commands do not check the network. Checking GitHub and installing Python packages
 does not call either model or consume subscription allowance.
 
@@ -90,14 +90,7 @@ so the original environment has the matching dependencies.
 
 ## Verification
 
-The offline suite checks fast-forwards, modified and diverged checkouts,
-untrusted remotes, simultaneous launches, live process locks, failed builds,
-network errors, activation failures, private-file preservation and runtime
-handoff. To exercise the real package installer in a disposable checkout:
-
-```text
-python scripts/check_updater.py
-```
-
-This separate check downloads Python dependencies and runs offline demo research.
-It does not contact model providers or modify your real installation.
+CI checks syntax, imports and formatting. Deployment should also check the active
+version, service health and preservation of existing research records. It does
+not generate sample research. See [validation](testing.md) for explicit live
+provider checks that consume subscription allowance.

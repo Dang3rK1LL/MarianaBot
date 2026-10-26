@@ -151,6 +151,75 @@ class ResearchCommands(app_commands.Group):
     async def retry(self, interaction: discord.Interaction, run_id: str = ""):
         await self.dispatch(interaction, "retry", run_id=run_id)
 
+    @app_commands.command(description="Show the pending questions for this guided round")
+    async def questions(self, interaction: discord.Interaction, run_id: str = ""):
+        await self.dispatch(interaction, "questions", run_id=run_id)
+
+    @app_commands.command(
+        description="Answer a round question; the final answer continues research"
+    )
+    async def answer(
+        self,
+        interaction: discord.Interaction,
+        question: str,
+        response: app_commands.Range[str, 1, 1000],
+        run_id: str = "",
+    ):
+        await self.dispatch(
+            interaction, "answer", question_id=question, message=response, run_id=run_id
+        )
+
+    @answer.autocomplete("question")
+    async def complete_question(self, interaction: discord.Interaction, current: str):
+        try:
+            self.bridge.config.authorize(
+                interaction.guild_id, interaction.channel_id, interaction.user.id
+            )
+        except PermissionError:
+            return []
+        run_id = self.bridge.select_active(getattr(interaction.namespace, "run_id", ""))
+        if not run_id:
+            return []
+        try:
+            run = self.bridge.store.run(run_id)
+        except ValueError:
+            return []
+        return [
+            app_commands.Choice(
+                name=excerpt(row["question_id"] + " · " + row["question"], 100),
+                value=row["question_id"],
+            )
+            for row in self.bridge.store.guidance(run_id, run["round"] + 1, pending=True)
+            if current.casefold() in (row["question_id"] + " " + row["question"]).casefold()
+        ][:25]
+
+    @answer.autocomplete("response")
+    async def complete_answer(self, interaction: discord.Interaction, current: str):
+        try:
+            self.bridge.config.authorize(
+                interaction.guild_id, interaction.channel_id, interaction.user.id
+            )
+        except PermissionError:
+            return []
+        run_id = self.bridge.select_active(getattr(interaction.namespace, "run_id", ""))
+        if not run_id:
+            return []
+        question = getattr(interaction.namespace, "question", "")
+        rows = [
+            row
+            for row in self.bridge.store.guidance(run_id, pending=True)
+            if row["question_id"] == question
+        ]
+        return (
+            [
+                app_commands.Choice(name=excerpt(option, 100), value=option)
+                for option in rows[0]["options"]
+                if current.casefold() in option.casefold()
+            ][:25]
+            if rows
+            else []
+        )
+
     @watch.autocomplete("run_id")
     @status.autocomplete("run_id")
     @recap.autocomplete("run_id")
@@ -160,6 +229,8 @@ class ResearchCommands(app_commands.Group):
     @resume.autocomplete("run_id")
     @stop.autocomplete("run_id")
     @retry.autocomplete("run_id")
+    @questions.autocomplete("run_id")
+    @answer.autocomplete("run_id")
     async def complete_research(self, interaction: discord.Interaction, current: str):
         # Autocomplete bypasses command checks, so authorize before reading any topics.
         try:
@@ -170,7 +241,7 @@ class ResearchCommands(app_commands.Group):
             return []
         return [
             app_commands.Choice(
-                name=excerpt(f"{row['id']} · {row['status']} · {row['problem']}", 100),
+                name=excerpt(f"{row['title']} · {row['status']} · {row['id']}", 100),
                 value=row["id"],
             )
             for row in self.bridge.research_choices(current)

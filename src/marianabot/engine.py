@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import json
 import random
 import time
 
@@ -9,27 +10,28 @@ from marianabot.clients import (
     ClaudeAccount,
     ClientError,
     CodexAccount,
-    DemoClient,
     NativeClient,
     claude_account,
     claude_models,
 )
 from marianabot.config import Config
-from marianabot.limits import SubscriptionLimits
-from marianabot.memory import (
-    Compactor,
-    SummaryTooLong,
-    SummaryValidationError,
-    extractive_summary,
-    size,
+from marianabot.guidance import (
+    INTAKE,
+    QUESTION_AUDIT,
+    QUESTION_PROMPT,
+    Intake,
+    QuestionAudit,
+    Questions,
+    validate_questions,
 )
+from marianabot.limits import SubscriptionLimits
+from marianabot.memory import Compactor, size
 from marianabot.model_catalog import parse_models
 from marianabot.presentation import update_metadata
 from marianabot.prompts import (
     JB_ROLES,
     JUDGE,
     MASTER_ANSWER,
-    MASTER_INTAKE,
     MASTER_STEER,
     PHASES,
     RB_ROLES,
@@ -57,6 +59,30 @@ def stop_reason(rounds: list[dict], config: Config) -> str | None:
     cfg = config.research
     if len(same_revision) < cfg.min_rounds:
         return None
+    stable = same_revision[-cfg.stable_rounds :]
+    if (
+        len(stable) == cfg.stable_rounds
+        and all(
+            row["review"].get("decision_ready")
+            and row["review"].get("decision", "").strip().casefold()
+            == review.get("decision", "").strip().casefold()
+            and row["review"].get("deliverables")
+            and not row["review"].get("blocking_issues")
+            and all(
+                row["review"].get(key, True)
+                for key in (
+                    "scope_aligned",
+                    "owner_constraints_preserved",
+                    "online_only",
+                    "guidance_respected",
+                )
+            )
+            for row in stable
+        )
+        and review.get("decision")
+        and not review.get("material_change", True)
+    ):
+        return "Stable decision reached; requested deliverables and remaining gaps are disclosed"
     streak = same_revision[-cfg.approval_streak :]
     if len(streak) == cfg.approval_streak and all(
         r["review"]["verdict"] == "approve"
@@ -82,14 +108,21 @@ def stop_reason(rounds: list[dict], config: Config) -> str | None:
 
 
 class Engine:
-    def __init__(self, store: Store, run_id: str, log=None, clients=None, messages_only=False):
+    def __init__(self, store: Store, run_id: str, log=None, messages_only=False):
         self.store, self.run_id = store, run_id
         run = store.run(run_id)
         self.config = Config.model_validate_json(run["config"])
-        self.demo = bool(run["demo"])
+        if run["demo"]:
+            raise ValueError(
+                "Historical simulated records are read-only; live research requires a real run"
+            )
         self.messages_only = messages_only
         self.initial_control_epoch = run["control_epoch"]
-        self.deadline = run["created"] + self.config.research.max_hours * 3600
+        self.deadline = (
+            run["created"]
+            + self.config.research.max_hours * 3600
+            + store.guidance_wait_seconds(run_id)
+        )
         self.log = log or (lambda _: None)
         self.shutdown = asyncio.Event()
         self.mailbox_lock = asyncio.Lock()
@@ -110,11 +143,8 @@ class Engine:
         client_dir.mkdir(parents=True, exist_ok=True)
         self.account = CodexAccount(self.config, client_dir)
         self.claude_account = ClaudeAccount(self.config, client_dir)
-        self.clients = clients or {
-            p: DemoClient()
-            if self.demo
-            else NativeClient(p, self.config, client_dir, self.limits[p])
-            for p in self.gates
+        self.clients = {
+            p: NativeClient(p, self.config, client_dir, self.limits[p]) for p in self.gates
         }
         self.memory = Compactor(self)
 
@@ -170,8 +200,6 @@ class Engine:
             )
 
     async def preflight(self):
-        if self.demo:
-            return
         if not self.config.subscription.overage_disabled:
             raise Halt(
                 "paused",
@@ -230,8 +258,6 @@ class Engine:
 
     async def monitor_usage(self, interval=60):
         """Refresh account quotas during long calls/waits, without generating model tokens."""
-        if self.demo:
-            return
 
         async def refresh(check):
             try:
@@ -255,8 +281,6 @@ class Engine:
             return account
 
     async def capacity(self, provider: str):
-        if self.demo:
-            return
         while True:
             self.check()
             if self.limits[provider].remaining():
@@ -286,8 +310,8 @@ class Engine:
         data: dict,
         search: bool = False,
         structured: bool = False,
-        internal_compaction: bool = False,
         validate=None,
+        schema=None,
     ) -> dict:
         self.check()
         cached = self.store.cached(self.run_id, task)
@@ -297,50 +321,30 @@ class Engine:
             self.config.research.max_response_words,
             250 if brain == "MB" else 450 if "-rb-" in task or "-jb-" in task else 700,
         )
-        if not internal_compaction:
-            for candidate in self.store.length_rejections(self.run_id, task):
-                result = candidate["result"]
-                try:
-                    self.validate_output(result, words, structured=structured, validate=validate)
-                except (ValidationError, ValueError):
-                    continue
-                result["recovered_validation_error"] = result.pop("validation_error")
-                self.store.finish(candidate["id"], "done", result, record_usage=False)
-                self.emit(
-                    f"{brain} · {task} · saved response recovered; no new model call",
-                    kind="output_recovered",
-                    payload={"call_id": candidate["id"], "task": task, "brain": brain},
+        for candidate in self.store.length_rejections(self.run_id, task):
+            result = candidate["result"]
+            try:
+                self.validate_output(
+                    result, words, structured=structured, validate=validate, schema=schema
                 )
-                return result
+            except (ValidationError, ValueError):
+                continue
+            result["recovered_validation_error"] = result.pop("validation_error")
+            self.store.finish(candidate["id"], "done", result, record_usage=False)
+            self.emit(
+                f"{brain} · {task} · saved response recovered; no new model call",
+                kind="output_recovered",
+                payload={"call_id": candidate["id"], "task": task, "brain": brain},
+            )
+            return result
         provider = "anthropic" if brain == "JB" else "openai"
         actual_search = search and self.config.research.web_search
-        max_chars = (
-            self.config.research.max_context_chars
-            if internal_compaction
-            else min(self.config.research.max_context_chars, 24000)
-        )
-        if task == "mb-intake":
+        max_chars = self.config.research.max_context_chars
+        if task in ("mb-intake", "mb-contract"):
             max_chars = max(max_chars, size(data) + 1000)
-        if not internal_compaction:
-            if task != "mb-intake":
-                data = data | self.memory.context()
-            protected = {
-                key: value
-                for key, value in data.items()
-                if key
-                in {
-                    "problem",
-                    "owner_problem",
-                    "owner_message",
-                    "owner_feedback",
-                    "protected_notes",
-                }
-            }
-            if task != "mb-intake":
-                max_chars = min(
-                    self.config.research.max_context_chars, max(max_chars, size(protected) + 4096)
-                )
-            data = await self.memory.prepare(data, max_chars)
+        else:
+            data = data | self.memory.context()
+        data = await self.memory.prepare(data, max_chars)
         history = self.store.rounds(self.run_id)
         revision = self.store.run(self.run_id)["revision"]
         phase = phase_for(history, revision)
@@ -350,8 +354,11 @@ class Engine:
             difficult |= current[-1]["review"].get("score", 100) <= current[-2]["review"].get(
                 "score", 0
             )
-        if not internal_compaction:
-            instruction += f"\nCurrent phase: {phase}. {PHASES[phase]}\nRESPONSE_BUDGET: at most {words} words. Return only the concise requested result."
+        instruction += f"\nCurrent phase: {phase}. {PHASES[phase]}\nRESPONSE_BUDGET: at most {words} words. Return only the concise requested result."
+        if schema:
+            instruction += "\nReturn only JSON matching this schema:\n" + json.dumps(
+                schema.model_json_schema()
+            )
         content = prompt(instruction, data, max_chars, actual_search)
         request_content = content
         attempt = 0
@@ -363,9 +370,7 @@ class Engine:
                 )
             except ValueError as exc:
                 raise Halt("paused", str(exc)) from exc
-            gate = (
-                self.mb_gate if brain == "MB" and not internal_compaction else self.gates[provider]
-            )
+            gate = self.mb_gate if brain == "MB" else self.gates[provider]
             async with gate:
                 await self.capacity(provider)
                 self.check()
@@ -389,29 +394,26 @@ class Engine:
                 request_started = time.monotonic()
                 try:
                     client = self.clients[provider]
-                    if isinstance(client, NativeClient):
-                        request_config = self.config.model_copy(deep=True)
-                        selected_brain = request_config.jb if brain == "JB" else request_config.rb
-                        selected_brain.model, selected_brain.effort = (
-                            selection.model,
-                            selection.effort,
+                    request_config = self.config.model_copy(deep=True)
+                    selected_brain = request_config.jb if brain == "JB" else request_config.rb
+                    selected_brain.model, selected_brain.effort = (
+                        selection.model,
+                        selection.effort,
+                    )
+                    if brain == "MB":
+                        request_config.research.request_timeout_seconds = min(
+                            120, request_config.research.request_timeout_seconds
                         )
-                        if brain == "MB" and not internal_compaction:
-                            request_config.research.request_timeout_seconds = min(
-                                120, request_config.research.request_timeout_seconds
-                            )
-                        client = NativeClient(
-                            provider, request_config, client.cwd, self.limits[provider]
-                        )
-                        result = await client.complete(
-                            call_content,
-                            actual_search,
-                            on_usage=lambda usage, final, call_id=call_id: self.store.record_usage(
-                                call_id, usage, final
-                            ),
-                        )
-                    else:
-                        result = await client.complete(call_content, actual_search)
+                    client = NativeClient(
+                        provider, request_config, client.cwd, self.limits[provider]
+                    )
+                    result = await client.complete(
+                        call_content,
+                        actual_search,
+                        on_usage=lambda usage, final, call_id=call_id: self.store.record_usage(
+                            call_id, usage, final
+                        ),
+                    )
                     result["elapsed_seconds"] = time.monotonic() - request_started
                     result["selection_reason"] = selection.reason
                     if task.endswith("-synthesis"):
@@ -421,7 +423,7 @@ class Engine:
                         words,
                         structured=structured,
                         validate=validate,
-                        internal_compaction=internal_compaction,
+                        schema=schema,
                     )
                     result["prompt"] = call_content
                     self.store.finish(call_id, "done", result)
@@ -430,41 +432,19 @@ class Engine:
                 except (ValidationError, ValueError) as exc:
                     quality_retry += 1
                     message = (
-                        "Memory compaction failed validation; originals retained"
-                        if internal_compaction
-                        else "Judge output failed schema validation"
+                        str(exc)
+                        if not isinstance(exc, ValidationError)
+                        else "Output failed the requested schema"
                     )
-                    if internal_compaction and isinstance(exc, SummaryValidationError):
-                        message = f"Memory compaction failed validation: {exc}; originals retained"
-                        request_content = prompt(
-                            instruction
-                            + f"\nCOMPACTION_RETRY: The previous summary failed validation: {exc}. "
-                            "Correct this in a fresh summary of the original source. Return only JSON "
-                            "with the exact source_id and a non-empty summary within target_chars "
-                            "(characters, not tokens). Copy any URLs exactly from the supplied source.",
-                            data,
-                            max_chars,
-                            actual_search,
-                        )
-                    elif not internal_compaction:
-                        message = (
-                            str(exc)
-                            if not isinstance(exc, ValidationError)
-                            else "Output failed the requested review schema"
-                        )
-                        request_content = (
-                            content
-                            + f"\nOUTPUT_RETRY: {message}. Return a corrected result within {words} words. Follow the exact schema where requested; human_tests must be empty. Do not ask the owner to perform validation."
-                        )
+                    request_content = (
+                        content
+                        + f"\nOUTPUT_RETRY: {message}. Return corrected JSON matching the exact supplied schema where requested. Keep it concise. Do not add unrelated fields or assign validation work to the owner."
+                    )
                     rejected = dict(result or {}) | {
                         "prompt": call_content,
                         "validation_error": message,
                     }
                     self.store.finish(call_id, "invalid", rejected)
-                    if internal_compaction and isinstance(exc, SummaryTooLong):
-                        # The compactor reduces this validated candidate instead
-                        # of regenerating the same oversized source on every retry.
-                        raise
                     error = ClientError(message, retryable=True)
                 except ClientError as exc:
                     self.store.finish(
@@ -491,8 +471,6 @@ class Engine:
                 await self.wait(self.limits[provider].remaining(), str(error))
                 continue
             if not error.retryable or attempt >= self.config.research.max_retries:
-                if internal_compaction and error.retryable:
-                    raise SummaryValidationError(str(error))
                 raise Halt("paused", str(error))
             attempt += 1
             await self.wait(min(120, 2**attempt * 3) + random.random(), str(error))
@@ -504,8 +482,15 @@ class Engine:
         *,
         structured=False,
         validate=None,
-        internal_compaction=False,
+        schema=None,
     ):
+        if schema:
+            raw = result["text"].strip()
+            if raw.startswith(chr(96) * 3):
+                raw = "\n".join(raw.splitlines()[1:-1])
+            result["parsed"] = schema.model_validate_json(raw).model_dump()
+            if schema is Intake:
+                result["text"] = result["parsed"]["brief"]
         if structured:
             raw = result["text"].strip()
             if raw.startswith(chr(96) * 3):
@@ -515,8 +500,7 @@ class Engine:
                 result["review"]["verdict"] = "revise"
         if validate:
             validate(result)
-        if not internal_compaction:
-            self.bound_output(result, words, structured=structured)
+        self.bound_output(result, words, structured=structured)
 
     def bound_output(self, result: dict, target_words: int, *, structured=False):
         """Length is presentation, not a failed research or schema validation."""
@@ -533,9 +517,7 @@ class Engine:
                 # change the verdict's meaning. Schema validation happens first.
                 action = "structured_retained"
             else:
-                result["original_text"] = text
-                result["text"] = extractive_summary(text, limit * 14, max_words=limit)
-                action = "partial_extract"
+                action = "response_retained"
         result["output_budget"] = {
             "target_words": target_words,
             "max_words": limit,
@@ -547,8 +529,8 @@ class Engine:
             self.emit(
                 "Length target exceeded; "
                 + (
-                    "partial extract used, full response archived"
-                    if action == "partial_extract"
+                    "full provider response retained"
+                    if action == "response_retained"
                     else "validated judge fields retained"
                 ),
                 kind="output_budget",
@@ -606,15 +588,79 @@ class Engine:
             await self.handle_commands(steering=False)
             await asyncio.sleep(1)
 
+    async def round_questions(self, number: int, history: list[dict]) -> list[dict]:
+        existing = self.store.guidance(self.run_id, number)
+        if not existing:
+            self.stage("questions", number)
+            earlier = self.store.guidance(self.run_id)
+            run = self.store.run(self.run_id)
+            data = {
+                "problem": run["problem"],
+                "brief": run["brief"],
+                "prior_questions": earlier,
+                "previous_review": history[-1]["review"] if history else {},
+                "question_limit": self.config.research.questions_per_round,
+            }
+            feedback = []
+            for attempt in range(self.config.research.max_retries + 1):
+
+                def validate(result):
+                    validate_questions(
+                        result["parsed"], earlier, self.config.research.questions_per_round
+                    )
+
+                proposed = await self.call(
+                    "MB",
+                    f"mb-guidance-{number}-attempt-{attempt}",
+                    QUESTION_PROMPT,
+                    data | {"audit_feedback": feedback},
+                    schema=Questions,
+                    validate=validate,
+                )
+                audit = await self.call(
+                    "JB",
+                    f"guidance-audit-{number}-attempt-{attempt}",
+                    QUESTION_AUDIT,
+                    data | {"proposed_questions": proposed["parsed"]["questions"]},
+                    schema=QuestionAudit,
+                )
+                judged = audit["parsed"]
+                if all(
+                    judged[key]
+                    for key in (
+                        "distinct_topics",
+                        "new_information",
+                        "easy_to_answer",
+                        "relevant_to_round",
+                    )
+                ):
+                    self.store.save_guidance(self.run_id, number, proposed["parsed"]["questions"])
+                    break
+                feedback = judged["corrections"]
+            else:
+                raise Halt(
+                    "paused",
+                    "Could not prepare distinct, relevant round questions; research has not advanced",
+                )
+        if self.store.await_guidance(self.run_id, number):
+            raise Halt("awaiting_answers", f"Answer the pending questions before round {number}")
+        return self.store.guidance(self.run_id, number)
+
     async def research(self):
         await self.memory.advance()
         run = self.store.run(self.run_id)
-        if not run["brief"]:
+        if not run["brief"] or not json.loads(run.get("contract") or "{}"):
             self.stage("intake")
             intake = await self.call(
-                "MB", "mb-intake", MASTER_INTAKE, {"owner_problem": run["problem"]}
+                "MB",
+                "mb-intake" if not run["brief"] else "mb-contract",
+                INTAKE,
+                {"owner_problem": run["problem"]},
+                schema=Intake,
             )
-            self.store.update_run(self.run_id, brief=intake["text"])
+            self.store.update_run(
+                self.run_id, brief=intake["text"], contract=json.dumps(intake["parsed"])
+            )
         self.store.message(
             self.run_id, "intake", "MB", "Research brief", self.store.run(self.run_id)["brief"]
         )
@@ -634,6 +680,12 @@ class Engine:
             prefix = f"round-{number}-revision-{run['revision']}"
             previous = history[-1] if history else {}
             phase = phase_for(history, run["revision"])
+            answers = (
+                await self.round_questions(number, history)
+                if self.config.research.mode == "guided"
+                else []
+            )
+            self.check()
             self.emit(
                 f"Round {number}/{self.config.research.max_rounds} · RB court",
                 kind="round_started",
@@ -653,6 +705,7 @@ class Engine:
                 "previous_plan": previous.get("plan", "First iteration"),
                 "previous_review": previous.get("review", "No previous review"),
                 "phase": phase,
+                "current_round_answers": answers,
             }
             researchers = await self.group(
                 [
@@ -700,6 +753,7 @@ class Engine:
                 "brief": run["brief"],
                 "plan": synthesis["text"],
                 "research_update": synthesis.get("update", {}),
+                "current_round_answers": answers,
                 "previous_review": previous.get("review", {}),
                 "phase": phase,
             }
@@ -735,6 +789,49 @@ class Engine:
                     chair["review"][key] = synthesis.get("update", {}).get(
                         key, [] if key == "changes" else ""
                     )
+            review = chair["review"]
+            contract = json.loads(run.get("contract") or "{}")
+            missing = [
+                item["id"]
+                for item in contract.get("deliverables", [])
+                if item["id"] not in review["deliverables"]
+            ]
+            for item in contract.get("deliverables", []):
+                status = review["deliverables"].get(item["id"])
+                quote = review["deliverable_evidence"].get(item["id"], "").strip()
+                if status not in ("complete", "partial", "blocked", "unverifiable") or (
+                    status == "complete"
+                    and (
+                        not quote
+                        or " ".join(quote.split()).casefold()
+                        not in " ".join(synthesis["text"].split()).casefold()
+                    )
+                ):
+                    missing.append(item["id"])
+                if item.get("kind") == "creative" and status in ("blocked", "unverifiable"):
+                    missing.append(item["id"] + " requires a conditional draft")
+            unapplied = [
+                item["question_id"]
+                for item in answers
+                if not review["guidance_application"].get(item["question_id"], "").strip()
+                or not review["guidance_evidence"].get(item["question_id"], "").strip()
+                or " ".join(
+                    review["guidance_evidence"].get(item["question_id"], "").split()
+                ).casefold()
+                not in " ".join(synthesis["text"].split()).casefold()
+            ]
+            if missing or unapplied or not review["guidance_respected"]:
+                review["verdict"] = "revise"
+                review["decision_ready"] = False
+                if missing:
+                    review["blocking_issues"] = [
+                        "Missing requested deliverable status: " + ", ".join(missing)
+                    ] + review["blocking_issues"][:2]
+                if unapplied or not review["guidance_respected"]:
+                    review["guidance_respected"] = False
+                    review["blocking_issues"] = [
+                        "Owner answers must be applied to the actual plan: " + ", ".join(unapplied)
+                    ] + review["blocking_issues"][:2]
             self.store.save_round(
                 self.run_id, number, run["revision"], synthesis["text"], chair["review"]
             )

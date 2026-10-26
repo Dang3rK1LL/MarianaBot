@@ -70,11 +70,20 @@ class Store:
                 id TEXT PRIMARY KEY, run_id TEXT NOT NULL, kind TEXT NOT NULL,
                 text TEXT NOT NULL, source TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1);
         """)
+        self.db.executescript("""
+            CREATE TABLE IF NOT EXISTS round_guidance (
+                run_id TEXT NOT NULL, number INTEGER NOT NULL, question_id TEXT NOT NULL,
+                topic TEXT NOT NULL, question TEXT NOT NULL, options TEXT NOT NULL,
+                impact TEXT NOT NULL, answer TEXT, created REAL NOT NULL, answered REAL,
+                PRIMARY KEY(run_id,question_id), UNIQUE(run_id,topic));
+        """)
         # Additive migration for stores created before the interactive chat.
         with self.transaction():
             if "effort" not in {row[1] for row in self.db.execute("PRAGMA table_info(calls)")}:
                 self.db.execute("ALTER TABLE calls ADD COLUMN effort TEXT NOT NULL DEFAULT ''")
             run_columns = {row[1] for row in self.db.execute("PRAGMA table_info(runs)")}
+            if "contract" not in run_columns:
+                self.db.execute("ALTER TABLE runs ADD COLUMN contract TEXT NOT NULL DEFAULT '{}'")
             if "work_dir" not in run_columns:
                 self.db.execute("ALTER TABLE runs ADD COLUMN work_dir TEXT NOT NULL DEFAULT ''")
             event_columns = {row[1] for row in self.db.execute("PRAGMA table_info(events)")}
@@ -117,9 +126,7 @@ class Store:
             self.db.rollback()
             raise
 
-    def create_run(
-        self, problem: str, config: Config, demo: bool = False, *, work_folder: Path | None = None
-    ) -> str:
+    def create_run(self, problem: str, config: Config, *, work_folder: Path | None = None) -> str:
         if not problem.strip() or len(problem) > 100000:
             raise ValueError("The problem must contain 1–100,000 characters")
         parent = resolve_work_folder(
@@ -145,7 +152,7 @@ class Store:
                     run_id,
                     problem,
                     config.model_dump_json(),
-                    demo,
+                    0,
                     time.time(),
                     "ready",
                     str(work_dir),
@@ -210,6 +217,18 @@ class Store:
         prefix = f"round-{number}-revision-{revision}"
         self.message(run_id, prefix + "-plan", "RB", f"Round {number} · Research plan", plan)
         sections = [f"**{review['score']}/100 · {review['verdict'].replace('_', ' ')}**"]
+        if review.get("deliverables"):
+            sections.append(
+                "### Requested outputs\n"
+                + "\n".join(f"- {key}: {value}" for key, value in review["deliverables"].items())
+            )
+        if review.get("guidance_application"):
+            sections.append(
+                "### Your answers applied\n"
+                + "\n".join(
+                    f"- {key}: {value}" for key, value in review["guidance_application"].items()
+                )
+            )
         for key, label in (
             ("strengths", "Strengths"),
             ("blocking_issues", "Blocking issues"),
@@ -238,7 +257,7 @@ class Store:
         return [dict(r) for r in self.db.execute("SELECT * FROM runs ORDER BY created DESC")]
 
     def update_run(self, run_id: str, **changes):
-        allowed = {"status", "reason", "control", "brief", "round", "revision"}
+        allowed = {"status", "reason", "control", "brief", "round", "revision", "contract"}
         if not changes or not set(changes) <= allowed:
             raise ValueError("Invalid run update")
         with self.db:
@@ -271,6 +290,10 @@ class Store:
 
     def progress(self, run_id: str) -> dict:
         run = self.run(run_id)
+        if run["status"] in ("awaiting_answers", "paused") and self.guidance(
+            run_id, run["round"] + 1
+        ):
+            return {"number": run["round"] + 1, "completed": run["round"], "stage": "questions"}
         started = self.db.execute(
             "SELECT created,payload FROM events WHERE run_id=? AND kind='round_started' "
             "AND json_extract(payload,'$.revision')=? ORDER BY id DESC LIMIT 1",
@@ -287,6 +310,12 @@ class Store:
         ).fetchone()
         if call and (number > run["round"] or call["state"] == "running"):
             task = call["task"]
+            if task.startswith(("mb-guidance-", "guidance-audit-")):
+                return {
+                    "number": run["round"] + 1,
+                    "completed": run["round"],
+                    "stage": "questions",
+                }
             stage = (
                 "memory"
                 if task.startswith("memory-")
@@ -447,11 +476,156 @@ class Store:
             )
 
     def owner_feedback(self, run_id: str) -> list[dict]:
-        return [
-            {"id": command["id"], "kind": command["kind"], "text": command["text"]}
+        messages = [
+            {
+                "id": command["id"],
+                "kind": command["kind"],
+                "text": command["text"],
+                "created": command["created"],
+            }
             for command in self.commands(run_id)
             if command["answer"] is not None
         ]
+        messages += [
+            {
+                "id": row["question_id"],
+                "kind": "round_answer",
+                "text": row["question"]
+                + "\nChoices: "
+                + "; ".join(row["options"])
+                + "\nOwner answer: "
+                + row["answer"],
+                "created": row["answered"],
+                "impact": row["impact"],
+            }
+            for row in self.guidance(run_id)
+            if row["answer"] is not None
+        ]
+        return sorted(messages, key=lambda row: row["created"])
+
+    def guidance(self, run_id: str, number: int | None = None, *, pending=False) -> list[dict]:
+        query = "SELECT * FROM round_guidance WHERE run_id=?"
+        args: list = [run_id]
+        if number is not None:
+            query += " AND number=?"
+            args.append(number)
+        if pending:
+            query += " AND answer IS NULL"
+        return [
+            dict(row) | {"options": json.loads(row["options"])}
+            for row in self.db.execute(query + " ORDER BY number,created,question_id", args)
+        ]
+
+    def save_guidance(self, run_id: str, number: int, questions: list[dict]):
+        from marianabot.guidance import validate_questions
+
+        run = self.run(run_id)
+        if run["status"] in ("complete", "stopped"):
+            raise ValueError("This research is closed")
+        maximum = Config.model_validate_json(run["config"]).research.questions_per_round
+        with self.transaction():
+            if self.guidance(run_id, number):
+                return
+            validate_questions({"questions": questions}, self.guidance(run_id), maximum)
+            for index, item in enumerate(questions, 1):
+                identifier = f"R{number}Q{index}"
+                self.db.execute(
+                    "INSERT INTO round_guidance VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        run_id,
+                        number,
+                        identifier,
+                        item["topic"],
+                        item["question"],
+                        json.dumps(item["options"]),
+                        item["impact"],
+                        None,
+                        time.time(),
+                        None,
+                    ),
+                )
+                self._message(
+                    run_id,
+                    "guidance-" + identifier,
+                    "MB",
+                    identifier,
+                    item["question"]
+                    + "\n\n"
+                    + " · ".join(item["options"])
+                    + "\n\n"
+                    + item["impact"],
+                )
+            self._event(
+                run_id,
+                f"Round {number}: {len(questions)} questions ready",
+                kind="questions_ready",
+                payload={"number": number, "questions": self.guidance(run_id, number)},
+            )
+
+    def answer_guidance(self, run_id: str, question_id: str, answer: str) -> bool:
+        if not answer.strip() or len(answer) > 1000:
+            raise ValueError("Use an answer of 1–1,000 characters")
+        with self.transaction():
+            run = self.run(run_id)
+            if run["status"] in ("complete", "stopped"):
+                raise ValueError("This research is closed")
+            row = self.db.execute(
+                "SELECT * FROM round_guidance WHERE run_id=? AND question_id=? COLLATE NOCASE",
+                (run_id, question_id),
+            ).fetchone()
+            if not row or row["number"] != run["round"] + 1:
+                raise ValueError("Choose a question for the pending round")
+            if row["answer"] is not None:
+                if row["answer"] == answer.strip():
+                    return not self.guidance(run_id, row["number"], pending=True)
+                raise ValueError(
+                    "This answer is already saved; use /steer to change an instruction"
+                )
+            self.db.execute(
+                "UPDATE round_guidance SET answer=?,answered=? WHERE run_id=? AND question_id=?",
+                (answer.strip(), time.time(), run_id, row["question_id"]),
+            )
+            self._message(
+                run_id,
+                "guidance-answer-" + row["question_id"],
+                "you",
+                row["question_id"],
+                answer.strip(),
+            )
+            remaining = len(self.guidance(run_id, row["number"], pending=True))
+            if run["status"] == "awaiting_answers":
+                self.db.execute(
+                    "UPDATE runs SET reason=? WHERE id=?",
+                    (
+                        f"{remaining} round questions remain"
+                        if remaining
+                        else "Answers saved; ready to continue",
+                        run_id,
+                    ),
+                )
+            return remaining == 0
+
+    def await_guidance(self, run_id: str, number: int) -> bool:
+        with self.transaction():
+            if self.run(run_id)["control"]:
+                return False
+            pending = self.guidance(run_id, number, pending=True)
+            if not pending:
+                return False
+            self.db.execute(
+                "UPDATE runs SET status='awaiting_answers',reason=? WHERE id=?",
+                (f"Answer {len(pending)} questions before round {number}", run_id),
+            )
+            return True
+
+    def guidance_wait_seconds(self, run_id: str) -> float:
+        return sum(
+            row["finished"] - row["started"]
+            for row in self.db.execute(
+                "SELECT MIN(created) AS started,MAX(answered) AS finished FROM round_guidance WHERE run_id=? GROUP BY number HAVING COUNT(answer)=COUNT(*)",
+                (run_id,),
+            )
+        )
 
     def selected_models(self, run_id: str) -> dict:
         result = {}

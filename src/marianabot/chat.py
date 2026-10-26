@@ -24,6 +24,7 @@ from textual.widgets.option_list import Option
 from marianabot.clients import ClaudeAccount, ClientError, CodexAccount
 from marianabot.config import Config, load_config, save_model_preferences
 from marianabot.greetings import STARTUP_GREETINGS
+from marianabot.guidance_ui import GuidanceScreen
 from marianabot.limits import SubscriptionLimits
 from marianabot.models_ui import ModelsScreen
 from marianabot.presentation import STAGES
@@ -34,6 +35,8 @@ from marianabot.worker import WorkerManager, atomic_json
 from marianabot.workspaces_ui import WorkFolderScreen
 
 COMMANDS = {
+    "/questions": "Answer this round's guided questions",
+    "/answer": "Save one answer: /answer R1Q1 your answer",
     "/help": "Show commands and keyboard shortcuts",
     "/ask": "Ask MB a question about this research",
     "/steer": "Change the brief at the next round boundary",
@@ -53,7 +56,6 @@ COMMANDS = {
     "/export": "Save the plan, conversation and evidence files",
     "/load": "Load a UTF-8 text file into the draft editor",
     "/copy": "Copy the latest research plan",
-    "/demo": "Start a free, offline demonstration conversation",
     "/quit": "Close chat; background research continues",
 }
 
@@ -82,12 +84,14 @@ RB develops the plan; JB challenges it. Their replies appear here automatically.
 After the first message, ordinary text is saved as feedback for the next round.
 Use **/ask question** for a status question without changing research. **/steer**
 also saves an instruction. Exact feedback remains available across models and memory
-summaries. Research validates online and continues without routine human review.
+summaries. Choose Automatic or Guided mode before starting. Guided mode asks short
+questions before each round; answer here or in Discord to continue.
 
 | Command | What it does |
 |---|---|
 | /ask question | Ask MB without changing research |
 | /steer instruction | Revise the next round's brief |
+| /questions · /answer R1Q1 text | View or answer guided round questions |
 | /pause · /resume | Pause or continue research |
 | /stop | Permanently end the run; saved work remains |
 | /new · /sessions · /open ID | Start or revisit a conversation |
@@ -97,7 +101,6 @@ summaries. Research validates online and continues without routine human review.
 | /export · /copy | Save all results or copy the latest plan |
 | /load path | Load a long problem from a UTF-8 file for editing |
 | /retry | Retry pending MB messages after fixing a problem |
-| /demo | New offline conversation with fixture responses |
 | /quit | Leave chat while background work continues |
 
 **Editing:** Enter sends. Alt+Enter or Ctrl+J adds a newline (Shift+Enter also works
@@ -212,7 +215,7 @@ class SessionsScreen(ModalScreen[str | None]):
                 *[
                     Option(
                         Text(
-                            f"{'DEMO · ' if r['demo'] else ''}{r['problem'].replace(chr(10), ' ')[:64]}\n{r['id']}  ·  {r['status']}  ·  round {r['round']}"
+                            f"{r['problem'].replace(chr(10), ' ')[:64]}\n{r['id']}  ·  {r['status']}  ·  round {r['round']}"
                         ),
                         id=r["id"],
                     )
@@ -250,11 +253,10 @@ class MarianaChat(App):
         Binding("ctrl+q", "detach", "Quit", priority=True),
     ]
 
-    def __init__(self, data_dir: Path, config_path: Path, *, demo=False, run_id=None, manager=None):
+    def __init__(self, data_dir: Path, config_path: Path, *, run_id=None, manager=None):
         super().__init__()
         self.store = Store(data_dir)
         self.config_path = config_path.resolve()
-        self.default_demo = self.demo = demo
         self.manager = manager or WorkerManager(self.store.directory)
         self.state_path = self.store.directory / "chat-state.json"
         try:
@@ -266,8 +268,6 @@ class MarianaChat(App):
         except (OSError, ValueError):
             self.saved = {}
         self.run_id = run_id if run_id is not None else self.saved.get("run_id")
-        if not self.run_id:
-            self.demo = demo or bool(self.saved.get("new_demo", False))
         self.last_message = 0
         self.last_status = None
         self.matches: list[str] = []
@@ -297,6 +297,9 @@ class MarianaChat(App):
             with Vertical(id="chat-main"):
                 yield VerticalScroll(id="conversation")
                 with Vertical(id="compose-box"):
+                    with Horizontal(id="guidance-bar"):
+                        yield Static("", id="guidance-pending", markup=False)
+                        yield Button("Answer questions", id="answer-guidance")
                     yield OptionList(id="suggestions", markup=False)
                     yield Composer(
                         id="composer",
@@ -310,6 +313,7 @@ class MarianaChat(App):
 
     async def on_mount(self):
         self.chat_screen = self.screen
+        self.chat_screen.query_one("#guidance-bar").display = False
         self.chat_screen.query_one("#suggestions").display = False
         self.theme = "textual-dark"
         if self.run_id:
@@ -336,7 +340,7 @@ class MarianaChat(App):
             return None
 
     def request_usage_refresh(self):
-        if self.demo or self.exiting:
+        if self.exiting:
             return None
         if self.usage_worker is not None and not self.usage_worker.is_finished:
             return self.usage_worker
@@ -362,7 +366,7 @@ class MarianaChat(App):
         async def refresh_provider(provider, account_class):
             try:
                 account = await account_class(config, workspace).snapshot()
-                if self.exiting or self.demo:
+                if self.exiting:
                     return
                 limits = SubscriptionLimits(self.store, provider, config.subscription)
                 if provider == "openai":
@@ -443,13 +447,11 @@ class MarianaChat(App):
 
     async def open_run(self, run_id: str, *, save=True):
         run = self.store.run(run_id)
-        if self.default_demo and not run["demo"]:
+        if run["demo"]:
             raise ValueError(
-                "This window is in offline demo mode. Open a normal chat for live sessions."
+                "Historical simulated records are read-only and are not opened as live research"
             )
-        if save:
-            self.save_draft(force=True)
-        self.run_id, self.demo = run_id, bool(run["demo"])
+        self.run_id = run_id
         self.chat_screen.query_one(
             Composer
         ).placeholder = "Feedback for the next round · /ask for a question…"
@@ -471,7 +473,7 @@ class MarianaChat(App):
                 self.last_message = message["id"]
 
     def draft_key(self):
-        return self.run_id or ("new-demo" if self.demo else "new")
+        return self.run_id or "new"
 
     def restore_draft(self):
         draft = self.saved.get("drafts", {}).get(self.draft_key(), "")
@@ -486,7 +488,6 @@ class MarianaChat(App):
         ):
             return
         self.saved["run_id"] = self.run_id
-        self.saved["new_demo"] = self.demo
         self.saved.setdefault("drafts", {})[self.draft_key()] = self.chat_screen.query_one(
             Composer
         ).text
@@ -584,33 +585,31 @@ class MarianaChat(App):
             raise ValueError(
                 "Another session is still working. Open /sessions and /pause it before starting this problem. Your draft is kept."
             )
-        if self.demo:
-            config = Config()
-            config.research.max_rounds = 2
-            config.research.min_rounds = 1
-            config.rb.concurrency = config.jb.concurrency = 2
-        else:
-            if not self.config_path.exists():
-                raise ValueError(
-                    "Configuration is missing. Run mariana init and mariana doctor once; then reopen chat. /demo works without setup."
-                )
-            config = load_config(self.config_path)
-            if not config.subscription.overage_disabled:
-                raise ValueError(
-                    "Subscription setup is incomplete. Disable extra usage and automatic credit purchases in both accounts, then set subscription.overage_disabled=true in mariana.toml. /demo needs no account setup."
-                )
-        folder = None
-        if not self.demo:
-            folder = await self.push_screen_wait(WorkFolderScreen())
-            if folder is None:
-                raise ValueError("Research was not started. Your problem remains in the draft.")
-            if self.manager.active():
-                raise ValueError("Another session started while choosing a folder. Pause it first.")
-        run_id = self.store.create_run(problem, config, demo=self.demo, work_folder=folder)
+        if not self.config_path.exists():
+            raise ValueError("Configuration is missing. Run mariana setup first.")
+        config = load_config(self.config_path)
+        if not config.subscription.overage_disabled:
+            raise ValueError(
+                "Disable provider extra usage and confirm subscription.overage_disabled before live research."
+            )
+        options = await self.push_screen_wait(WorkFolderScreen())
+        if options is None:
+            raise ValueError("Research was not started. Your problem remains in the draft.")
+        if self.manager.active():
+            raise ValueError(
+                "Another session started while choosing research options. Pause it first."
+            )
+        config.research.mode = options.mode
+        config.research.questions_per_round = options.questions
+        run_id = self.store.create_run(problem, config, work_folder=options.folder)
         await self.open_run(run_id)
         await self.note(
             f"Research started · {run_id}",
-            "MB is preparing a short brief. RB and JB will research online and continue autonomously. Ordinary messages are saved as feedback for the next round; use **/ask** for questions or **/pause** to take a break.\n\n"
+            (
+                "MB is preparing the research contract. Before each round, answer the guided questions in this app or Discord. The last answer continues the round automatically.\n\n"
+                if options.mode == "guided"
+                else "MB is preparing the research contract. RB and JB will research online independently.\n\n"
+            )
             + "Research files: "
             + self.store.run(run_id)["work_dir"],
         )
@@ -654,12 +653,24 @@ class MarianaChat(App):
     async def command(self, name: str, argument: str):
         if name not in COMMANDS:
             raise ValueError(f"Unknown command: {name}. Type / for suggestions or use /help.")
-        if name not in ("/ask", "/steer", "/open", "/load", "/pin", "/unpin") and argument:
+        if (
+            name not in ("/ask", "/steer", "/open", "/load", "/pin", "/unpin", "/answer")
+            and argument
+        ):
             raise ValueError(f"{name} takes no argument.")
         if name == "/help":
             self.action_help()
-        elif name in ("/new", "/demo"):
-            await self.new_conversation(name == "/demo" or self.default_demo)
+        elif name == "/questions":
+            await self.show_guidance()
+        elif name == "/answer":
+            self.require_run()
+            parts = argument.split(maxsplit=1)
+            if len(parts) != 2:
+                raise ValueError("Use /answer R1Q1 followed by your answer")
+            self.store.answer_guidance(self.run_id, parts[0], parts[1])
+            await self.continue_guidance()
+        elif name == "/new":
+            await self.new_conversation()
         elif name == "/sessions":
             self.action_sessions()
         elif name == "/models":
@@ -783,9 +794,42 @@ class MarianaChat(App):
                 self.copy_to_clipboard(rounds[-1]["plan"])
                 self.notify("Latest plan copied (requires terminal clipboard support).")
 
-    async def new_conversation(self, demo: bool):
+    @on(Button.Pressed, "#answer-guidance")
+    def answer_guidance_button(self):
+        self.run_worker(self.show_guidance(), group="guidance", exclusive=True, exit_on_error=False)
+
+    async def show_guidance(self):
+        self.require_run()
+        questions = self.store.guidance(
+            self.run_id, self.store.run(self.run_id)["round"] + 1, pending=True
+        )
+        if not questions:
+            await self.note("Round questions", "No unanswered questions for this round.")
+            return
+        answers = await self.push_screen_wait(GuidanceScreen(questions))
+        if answers:
+            try:
+                for identifier, text in answers.items():
+                    self.store.answer_guidance(self.run_id, identifier, text)
+                await self.continue_guidance()
+            except ValueError as exc:
+                await self.note("Answers", str(exc))
+
+    async def continue_guidance(self):
+        try:
+            started = await self.manager.continue_guided(self.run_id)
+            await self.note(
+                "Answer saved",
+                "Research is continuing with your answers."
+                if started
+                else "Your exact answer is saved. Research continues after all questions are answered; an owner pause stays paused.",
+            )
+        except (ValueError, OSError) as exc:
+            await self.note("Answers saved", str(exc))
+
+    async def new_conversation(self):
         self.save_draft(force=True)
-        self.run_id, self.demo = None, demo
+        self.run_id = None
         self.last_message, self.last_status = 0, None
         self.awaiting_reply = False
         await self.welcome()
@@ -795,8 +839,6 @@ class MarianaChat(App):
         self.request_usage_refresh()
 
     def usage_text(self):
-        if self.demo:
-            return "Offline demo · no subscription usage."
         lines = [self.usage_error, ""] if self.usage_error else []
         for provider, label in (("openai", "OpenAI · MB + RB"), ("anthropic", "Claude · JB")):
             data = self.store.get_limits(provider)
@@ -847,15 +889,24 @@ class MarianaChat(App):
         if not self.is_running or self.exiting:
             return
         active = self.manager.active()
+        pending_guidance = (
+            self.store.guidance(self.run_id, self.store.run(self.run_id)["round"] + 1, pending=True)
+            if self.run_id
+            else []
+        )
+        self.chat_screen.query_one("#guidance-bar").display = bool(pending_guidance)
+        if pending_guidance:
+            self.chat_screen.query_one("#guidance-pending", Static).update(
+                f"Round {pending_guidance[0]['number']} · {len(pending_guidance)} questions need answers"
+            )
         usage_run = active.get("run_id") if active else None
         usage_run = usage_run or self.run_id
-        usage_demo = bool(self.store.run(usage_run)["demo"]) if usage_run else self.demo
         try:
             usage_config = (
                 Config.model_validate_json(self.store.run(usage_run)["config"])
                 if usage_run
                 else load_config(self.config_path)
-                if not usage_demo and self.config_path.exists()
+                if self.config_path.exists()
                 else Config()
             )
         except (OSError, ValueError):
@@ -872,7 +923,6 @@ class MarianaChat(App):
             {provider: self.store.get_limits(provider) for provider in ("openai", "anthropic")},
             scope=scope,
             config=usage_config,
-            demo=usage_demo,
             working=bool(active and active.get("run_id") == usage_run),
             refresh={
                 provider: "refreshing"
@@ -891,7 +941,7 @@ class MarianaChat(App):
             run = self.store.run(self.run_id)
             progress = self.store.progress(self.run_id)
             maximum = Config.model_validate_json(run["config"]).research.max_rounds
-            status = f"{self.run_id} · {run['status'].capitalize()} · Round {progress['number']}/{maximum} · {STAGES[progress['stage']]}"
+            status = f"{self.run_id} · {run['status'].replace('_', ' ').capitalize()} · Round {progress['number']}/{maximum} · {STAGES[progress['stage']]}"
             attached = active and active.get("run_id") == self.run_id
             if run["status"] == "running" and not attached:
                 status = f"{self.run_id} · Worker disconnected · /resume to reconnect"
@@ -948,12 +998,12 @@ class MarianaChat(App):
                 await self.open_run(run_id)
             self.action_compose()
 
-        runs = [r for r in self.store.runs() if r["demo"] or not self.default_demo]
+        runs = [r for r in self.store.runs() if not r["demo"]]
         self.push_screen(SessionsScreen(runs), chosen)
 
     @on(Button.Pressed, "#new")
     async def action_new(self):
-        await self.new_conversation(self.default_demo)
+        await self.new_conversation()
 
     @on(Button.Pressed, "#models")
     def action_models(self):

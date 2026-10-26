@@ -45,11 +45,13 @@ class SubscriptionConfig(StrictModel):
 
 
 class ResearchConfig(StrictModel):
-    max_rounds: int = Field(default=24, ge=1, le=10000)
+    mode: Literal["automatic", "guided"] = "automatic"
+    questions_per_round: int = Field(default=3, ge=1, le=10)
+    max_rounds: int = Field(default=8, ge=1, le=10000)
     max_hours: float = Field(default=72, gt=0, le=8760)
-    min_rounds: int = Field(default=3, ge=1)
+    min_rounds: int = Field(default=2, ge=1)
     approval_streak: int = Field(default=2, ge=1)
-    plateau_rounds: int = Field(default=4, ge=2)
+    plateau_rounds: int = Field(default=2, ge=2)
     quality_threshold: int = Field(default=85, ge=0, le=100)
     web_search: bool = True
     max_context_chars: int = Field(default=60000, ge=8000, le=200000)
@@ -57,6 +59,7 @@ class ResearchConfig(StrictModel):
     max_retries: int = Field(default=3, ge=0, le=12)
     max_response_words: int = Field(default=700, ge=150, le=2000)
     memory_chars: int = Field(default=8000, ge=1000, le=32000)
+    stable_rounds: int = Field(default=2, ge=2, le=6)
 
 
 class UpdateConfig(StrictModel):
@@ -144,11 +147,14 @@ codex_command = "codex"
 claude_command = "claude"
 
 [research]
-max_rounds = 24
-min_rounds = 3
+mode = "automatic"
+questions_per_round = 3
+stable_rounds = 2
+max_rounds = 8
+min_rounds = 2
 max_hours = 72
 approval_streak = 2
-plateau_rounds = 4
+plateau_rounds = 2
 quality_threshold = 85
 web_search = true
 max_context_chars = 60000

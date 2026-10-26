@@ -77,31 +77,26 @@ def update_command(
 def chat(
     data_dir: DataDir = DEFAULT_DATA,
     config: Path = Path("mariana.toml"),
-    demo: bool = False,
     run_id: Annotated[str | None, typer.Option("--run")] = None,
 ):
-    """Open the interactive conversation. --demo uses offline fixture responses."""
+    """Open the live research conversation."""
     from marianabot.chat import MarianaChat
 
-    if demo and data_dir == DEFAULT_DATA:
-        data_dir = DEFAULT_DATA / "demo"
     try:
-        if not demo and not config.exists() and sys.stdin.isatty():
+        if not config.exists() and sys.stdin.isatty():
             from marianabot.setup import configure
 
             configure(config, data_dir, console)
-        result = MarianaChat(data_dir, config, demo=demo, run_id=run_id).run()
+        result = MarianaChat(data_dir, config, run_id=run_id).run()
         if result:
             console.print(Text(result))
     except (ValueError, OSError) as exc:
         fail(exc)
 
 
-def config_at(path: Path, demo: bool = False) -> Config:
+def config_at(path: Path) -> Config:
     if path.exists():
         return load_config(path)
-    if demo:
-        return Config()
     raise ValueError(
         "Configuration missing. Run mariana setup first (or mariana init for defaults)."
     )
@@ -142,9 +137,7 @@ def init(config: Path = Path("mariana.toml"), data_dir: DataDir = DEFAULT_DATA):
         console.print(
             Text(f"Created {config}. Subscription mode; no API keys are used.", style="cyan")
         )
-        console.print(
-            "Try mariana demo, then mariana doctor. See docs/subscriptions.md before live use."
-        )
+        console.print("Run mariana doctor. See docs/subscriptions.md before live use.")
     except (ValueError, OSError) as exc:
         fail(exc)
 
@@ -156,6 +149,8 @@ def new(
     config: Path = Path("mariana.toml"),
     data_dir: DataDir = DEFAULT_DATA,
     work_folder: Annotated[Path | None, typer.Option("--work-folder")] = None,
+    mode: Annotated[str | None, typer.Option("--mode", help="automatic or guided")] = None,
+    questions: Annotated[int, typer.Option("--questions", min=1, max=10)] = 3,
 ):
     """Save a problem. MB prepares the brief when you run it."""
     try:
@@ -170,6 +165,14 @@ def new(
                 default=str(default_work_folder()),
             )
         )
+        selected_mode = mode or (
+            typer.prompt("Research mode (automatic/guided)", default=settings.research.mode)
+            if sys.stdin.isatty()
+            else settings.research.mode
+        )
+        if selected_mode not in ("automatic", "guided"):
+            raise ValueError("Research mode must be automatic or guided")
+        settings.research.mode, settings.research.questions_per_round = selected_mode, questions
         text = problem_file.read_text(encoding="utf-8") if problem_file else problem
         if not text:
             text = typer.prompt("What business problem should MarianaBot investigate?")
@@ -225,6 +228,8 @@ def run_worker(
             if record["status"] in ("complete", "stopped"):
                 console.print(f"Run is {record['status']}. Export it or create a new run.")
                 return
+            if store.guidance(run_id, record["round"] + 1, pending=True):
+                raise ValueError("Answer the pending round questions before resuming")
             if config:
                 settings = load_config(config)
                 with store.db:
@@ -255,6 +260,37 @@ def run(run_id: str, data_dir: DataDir = DEFAULT_DATA, plain: bool = False):
 
 
 @app.command()
+def questions(run_id: str, data_dir: DataDir = DEFAULT_DATA):
+    """Display pending guided questions without starting inference."""
+    store = Store(data_dir)
+    try:
+        for row in store.guidance(run_id, store.run(run_id)["round"] + 1, pending=True):
+            console.print(Text(row["question_id"] + ": " + row["question"]))
+            console.print(Text(" · ".join(row["options"])))
+    finally:
+        store.close()
+
+
+@app.command()
+def answer(run_id: str, question_id: str, message: str, data_dir: DataDir = DEFAULT_DATA):
+    """Save a real answer; the last answer continues an unpaused guided run."""
+    from marianabot.worker import WorkerManager
+
+    store = Store(data_dir)
+    try:
+        store.answer_guidance(run_id, question_id, message)
+    except (ValueError, OSError) as exc:
+        fail(exc)
+    finally:
+        store.close()
+    try:
+        started = asyncio.run(WorkerManager(data_dir).continue_guided(run_id))
+    except (ValueError, OSError) as exc:
+        fail(ValueError(f"Answer saved. {exc}"))
+    console.print("Answer saved. Research continuing." if started else "Answer saved.")
+
+
+@app.command()
 def resume(
     run_id: str,
     data_dir: DataDir = DEFAULT_DATA,
@@ -265,27 +301,11 @@ def resume(
     run_worker(run_id, data_dir, plain, True, config)
 
 
-@app.command()
-def demo(data_dir: DataDir = Path(".mariana/demo"), plain: bool = False):
-    """Run a complete offline demonstration, without logins or network calls."""
-    settings = Config()
-    settings.research.max_rounds = 2
-    settings.research.min_rounds = 1
-    settings.rb.concurrency = settings.jb.concurrency = 2
-    store = Store(data_dir)
-    run_id = store.create_run(
-        "Test a small subscription service for independent local businesses.", settings, demo=True
-    )
-    store.close()
-    run_worker(run_id, data_dir, plain)
-
-
 def queue(run_id: str, kind: str, message: str, data_dir: Path):
     store = Store(data_dir)
     try:
         command_id = store.enqueue(run_id, kind, message)
-        timing = "next round boundary" if kind == "steer" else "next available MB slot"
-        console.print(f"Queued {kind} #{command_id}; handled at the {timing}.")
+        console.print(f"Saved {kind} #{command_id}.")
     except ValueError as exc:
         fail(exc)
     finally:

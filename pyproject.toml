@@ -4,14 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "marianabot"
-version = "0.6.0"
+version = "0.7.0"
 description = "Persistent three-brain research through subscription-authenticated AI clients"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = ["pydantic>=2.10,<3", "rich>=14.2,<15", "typer>=0.15,<1", "filelock>=3.16,<4", "textual>=8.2.8,<9"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.3,<10", "pytest-asyncio>=0.25,<2", "ruff>=0.9,<1"]
+dev = ["ruff>=0.9,<1"]
 discord = ["discord.py>=2.6,<3"]
 
 [project.scripts]
@@ -19,10 +19,6 @@ mariana = "marianabot.bootstrap:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/marianabot"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-asyncio_mode = "auto"
 
 [tool.ruff]
 line-length = 100

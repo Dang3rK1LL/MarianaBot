@@ -1,68 +1,45 @@
-# Testing
+# Validation
 
-## Offline checks
+The shipped app has no demo client, fixture research or fabricated fallback
+responses. Earlier simulated records remain distinguishable and read-only.
 
-From an activated development environment in the repository root:
+## Static checks
 
 ```text
 python -m pip install -e ".[dev,discord]"
-python -m ruff check src tests scripts
-python -m ruff format --check src tests scripts
-python -m pytest -q
-python -m marianabot demo --plain
+python -m ruff check src scripts
+python -m ruff format --check src scripts
+python -m compileall -q src scripts
 ```
 
-The suite and demo use fixtures without provider logins or model calls. The demo
-writes to its own data directory. Installing dependencies requires network access.
-[CI](../.github/workflows/ci.yml) runs these checks on Windows and Ubuntu with
-Python 3.11, 3.13 and 3.14. See [Actions](https://github.com/Dang3rK1LL/MarianaBot/actions)
-for results tied to each commit.
+CI runs these checks on Windows and Ubuntu with Python 3.11, 3.13 and 3.14,
+plus imports of the CLI, guided schemas and Discord adapter. Static checks do
+not validate provider behavior. CI never runs model prompts or synthetic research.
 
-Tests cover research rounds, controls, checkpoint recovery, quota refresh and waits,
-token accounting, protected memory, model menus, terminal interaction, exports,
-backups, Discord delivery and safe updates. Client protocol tests use fixture
-subprocesses; they cannot establish live provider behavior.
+## Live checks
 
-## Additional development tools
-
-| Tool | Purpose | Requirements |
-|---|---|---|
-| [`scripts/capture_chat.py`](../scripts/capture_chat.py) | Capture the real terminal UI using synthetic research and usage | Base app; optional `resvg-py` for PNG output |
-| [`scripts/preview_discord.py`](../scripts/preview_discord.py) | Preview notification cards with synthetic data as HTML and SVG | Base app; optional `resvg-py` for PNG output; no bot connection or model calls |
-| [`scripts/check_updater.py`](../scripts/check_updater.py) | Build, validate and launch an update in a disposable checkout | Git and network access for Python packages |
-| [`scripts/check_linux_service.py`](../scripts/check_linux_service.py) | Check service interruption, checkpoint recovery and preservation of a deliberate pause | Linux, systemd user services and tmux |
-
-Run these tools with `python scripts/NAME.py` from the repository root. The four
-tools above do not call model providers. The updater check uses temporary repositories and
-environments. The Linux check creates and removes a temporary user service and
-demo database, independently of the normal research service.
-
-Both visual tools write to the gitignored `.mariana/visual-review/` directory by
-default. To regenerate the documentation images in a separate output folder:
+[`scripts/live_review.py`](../scripts/live_review.py) reads an existing completed
+research from a private SQLite backup. It makes real calls to validate intake,
+two batches of distinct guided questions, their independent audits and the review
+schema. It also evaluates the original assignment against the final output.
+It never creates, starts or resumes a research run and never invents owner answers.
 
 ```text
-python -m pip install resvg-py
-python scripts/capture_chat.py --output .mariana/visual-review/current-samples
-python scripts/preview_discord.py --output .mariana/visual-review/current-samples/discord-updates.html
+python scripts/live_review.py --snapshot PRIVATE_BACKUP.sqlite3 --run-id COMPLETED_ID --output .mariana/live-review
 ```
 
-The published images use synthetic data: `usage.png` supplies
-[`docs/assets/chat.png`](assets/chat.png), and `models-narrow.png` supplies
-[`docs/assets/models.png`](assets/models.png). `discord-updates.png` supplies
-[`docs/assets/discord.png`](assets/discord.png), a synthetic recap preview rendered
-from the bot's actual embed builder. Review any replacement before publishing it;
-personal research should never appear in documentation screenshots.
+Run it on the host with your subscription logins and disabled overage settings.
+It consumes allowance. `--provider openai` performs only the Codex checks and
+explicitly reports that Claude was not checked. Successful parsed responses are
+saved and reused on a rerun; a rejected audit still fails validation. Inspect and
+preserve a failed result before retrying with a new output directory.
 
-## Live verification
+[`scripts/live_smoke.py`](../scripts/live_smoke.py) offers a smaller explicit
+connectivity check with real provider requests. Neither script runs on startup.
+`mariana doctor` and model/allowance refreshes read account metadata without
+research inference. Provider responses and research remain private under `.mariana/`.
 
-`mariana doctor` checks installed client versions, authentication metadata and
-available Codex models without sending model prompts. Use the separate
-[live connectivity check](operations.md#explicit-live-connectivity-test) only
-when you intend to consume subscription allowance. Its records remain private
-under `.mariana/`; CI and normal startup never invoke it.
-
-To evaluate research quality, compare the same problem with a single research
-pass and with several MarianaBot rounds. Review factual accuracy, evidence,
-economic realism, executable actions and testable assumptions without identifying
-which method produced each result. Track supported findings and resolved blockers;
-a higher judge score alone is not evidence of a better business plan.
+Assess quality by comparing requested deliverables with actual outputs, source
+support, decision changes and calls spent. Reviewer scores alone do not measure
+quality. Guided answer submission and automatic continuation require observation
+in a real user-started run; isolated provider checks do not establish that full flow.

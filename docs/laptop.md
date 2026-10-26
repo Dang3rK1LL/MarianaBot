@@ -66,7 +66,6 @@ uses available efficient models in adaptive mode; fixed mode retains exact RB/JB
 choices. MB has its own lightweight selection. Fable is excluded. Saved choices
 affect new runs; current/last selections are shown in the fullscreen sidebar.
 
-![Adaptive routing with a separate lightweight MB model and RB/JB ceilings; offline fixture.](assets/models.png)
 
 Older research is automatically summarized using MB's allowance. The current
 owner problem, feedback and explicit pins stay verbatim; historical objections
@@ -97,9 +96,9 @@ shortcut also requests fresh limits when it reattaches to an existing chat.
 These checks read account metadata without model prompts. If a check fails,
 the last successful snapshot stays visible with its original timestamp and a
 refresh-failed label for that provider. A slow or failed check does not block the
-other provider's display. Offline demos do not fetch account limits.
+other provider's display.
 
-Research ends at 24 rounds or 72 elapsed hours by default, or earlier on sustained
+Research ends at eight rounds or 72 elapsed hours by default, or earlier on sustained
 approval or exhausted useful online evidence. Routine human-evidence verdicts no
 longer pause the loop. Missing private facts remain limitations. Reviewer scores
 express model judgment, not independently verified demand.
@@ -109,22 +108,13 @@ closing the lid may trigger sleep. Pause before planned shutdown. After a reboot
 open chat and `/resume` unfinished research. The elapsed-time deadline includes
 sleep and pauses. No Windows service or power-setting change is installed.
 
-## Local setup and a free demo
+## Local setup
 
 Run `mariana setup` to select models and configure live use. Existing provider
 logins are retained. This records your confirmation that usage credits are off;
-it does not independently inspect provider billing settings. Configuration and
-research stay local and outside Git.
-
-To explore without subscription usage:
-
-```powershell
-.\.venv\Scripts\mariana.exe chat --demo
-```
-
-The demo uses clearly labeled fixtures. Normal chat also supports `/demo`, then
-`/new` to return to the normal mode. For a new installation, follow the one-time
-setup in [README](../README.md) and [subscription setup](subscriptions.md).
+it does not inspect provider billing settings. Research stays outside Git.
+There is no offline demo mode. Follow [installation](../README.md) and
+[subscription setup](subscriptions.md) before starting live research.
 
 Use `mariana new`, `run`, `ask`, and the other shell commands for automation.
 See [CLI operations](operations.md) for those commands and diagnostics.

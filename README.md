@@ -5,7 +5,6 @@ let a research team build a plan, and let a separate review team challenge it.
 Ask questions or change direction while they work. Each round, critique and
 decision stays in a local research history.
 
-![MarianaBot research conversation with a readable research ID and fixed info panel showing models, efforts and usage; synthetic data.](docs/assets/chat.png)
 
 MarianaBot runs on **your own computer by default**, using your own ChatGPT and
 Claude subscription logins through the official Codex and Claude Code clients.
@@ -66,8 +65,8 @@ provider accounts, then confirm this in setup. Live research stays locked until
 you confirm. MarianaBot cannot inspect or change those billing settings.
 See [subscription setup](docs/subscriptions.md).
 
-To try the interface without logins or model usage, run
-`mariana chat --demo`. It uses offline fixtures and a separate demo directory.
+All research responses come from the signed-in providers. No demo mode or fabricated
+fallback answers are shipped. Historical simulated records remain read-only.
 
 ## Use it
 
@@ -75,7 +74,13 @@ Paste your problem into the editor. **Enter sends; Alt+Enter or Ctrl+J adds a
 newline.** Long pastes remain editable. Include constraints, what you already
 know, and what decision the research should help you make.
 
-Before starting each live research run, choose a work folder. MarianaBot creates
+Before starting each research run, choose a work folder and **Automatic** or
+**Guided** mode. Automatic runs independently. Guided asks a few short questions
+before each round; answer in the app or Discord. Three questions is the default,
+with a maximum of ten. Topics must be distinct from earlier rounds. Exact answers
+steer both teams and the review checks how they affected the deliverables.
+
+MarianaBot creates
 a separate `research-RUN_ID` subfolder there for the problem, client workspace
 and exported results. The default parent is `~/MarianaBot-work` on the host
 running the research. Completed rounds refresh the results automatically.
@@ -89,7 +94,8 @@ The shared SQLite history still lets chat and Discord find all your sessions.
 
 Research progresses through **foundation ? online validation ? decision**.
 JB must establish the foundation before detailed work begins. The teams continue
-until supported approval, exhausted useful online evidence or a configured limit. Defaults are 24 rounds and 72 elapsed hours.
+until supported approval, exhausted useful online evidence or a configured limit. Defaults are eight rounds and 72 elapsed hours. Stable decisions can finish earlier;
+requested outputs are tracked separately from the business recommendation.
 Specialists run one at a time by default; count and concurrency are configurable.
 More rounds and higher reviewer scores do not establish that a business will work.
 Responses are concise decision memos. Validation uses public online evidence;
@@ -103,6 +109,7 @@ without changing research. Type `/` to see commands:
 |---|---|
 | `/steer Keep Hungary and the EUR 500 budget.` | Saves an instruction for the next round |
 | `/ask What has been established?` | Asks MB without changing research |
+| `/questions` / `/answer R1Q1 Your answer` | Opens or answers pending guided questions |
 | `/pause` / `/resume` | Pauses or continues from saved checkpoints |
 | `/stop` | Permanently ends this research run |
 | `/sessions` / `/new` | Opens saved research or starts a new draft |
@@ -140,11 +147,11 @@ It uses reported reset times where available and a conservative retry interval
 otherwise. It does not purchase credits or switch to API billing.
 See [usage reporting](docs/usage.md) for what each provider exposes.
 
-Older research is summarized through MB. Original problems, answered owner
-feedback and explicit pins remain verbatim across models. The current review
-supplies the active issue list; historical reviews stay archived. Bad summaries
-have bounded retries and a labeled extract fallback. If the owner contract itself
-cannot fit, the worker preserves it and pauses. See the [research workflow](docs/research.md)
+Working memory comes from the live review without separate summarization calls.
+Original problems, guided answers, owner feedback and explicit pins remain verbatim
+across models. Historical work stays archived. Oversized evidence uses labeled
+source excerpts. If the owner contract cannot fit, the worker preserves it and
+pauses. See the [research workflow](docs/research.md)
 and [memory guide](docs/memory.md).
 
 ## Your data and your server
@@ -175,9 +182,7 @@ You create your own bot, choose allowed users, and explicitly select which run t
 share. It is disabled by default, with private credentials kept outside Git.
 Follow the [Discord setup guide](docs/discord.md).
 
-![Discord round recap preview with the research ID, findings, changes, next steps, timing and token usage; synthetic data.](docs/assets/discord.png)
 
-Synthetic card preview; no Discord connection or model calls were made.
 
 ## Automatic updates
 
@@ -195,13 +200,13 @@ Laptop and VPS installations update independently. See [startup updates](docs/up
 
 ```text
 python -m pip install -e ".[dev,discord]"
-python -m ruff check src tests scripts
-python -m ruff format --check src tests scripts
-python -m pytest -q
+python -m ruff check src scripts
+python -m ruff format --check src scripts
+python -m compileall -q src scripts
 ```
 
-Tests and CI use offline fixtures. Live connectivity checks are separate and
-consume subscription allowance. See [testing](docs/testing.md) for coverage and
-development tools, and [architecture](docs/architecture.md) for scheduling,
-recovery and stop conditions. This is a personal-use project; multi-day research
-quality and a real exhaustion/reset cycle still need broader validation.
+CI runs static checks only. Behavioral validation uses explicit live provider
+calls and consumes subscription allowance; it never runs automatically in CI or
+on startup. See [validation](docs/testing.md) and [architecture](docs/architecture.md).
+Live checks are evidence about the calls exercised, not a guarantee of future
+research quality.

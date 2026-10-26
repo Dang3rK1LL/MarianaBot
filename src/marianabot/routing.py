@@ -59,14 +59,18 @@ class TaskRouter:
                 self.config.mb.effort,
                 "brief or owner message",
             )
-            if task.startswith("memory-"):
-                desired, reason = "medium", "bounded memory summary"
             if retry:
                 model, desired, reason = (
                     self.family("rb", "sol", ceiling.model),
                     "medium",
-                    "summary or response validation retry",
+                    "response validation retry",
                 )
+        elif task.startswith("guidance-audit-") and self.config.routing.mode == "adaptive":
+            model, desired, reason = (
+                self.family("jb", "sonnet", ceiling.model),
+                "medium",
+                "Question relevance and novelty audit",
+            )
         elif self.config.routing.mode == "fixed":
             model, desired, reason = ceiling.model, ceiling.effort, "fixed selection"
         elif difficult or retry or phase == "decision":
@@ -93,8 +97,8 @@ class TaskRouter:
         if not subscription_eligible(model) or (catalog and model not in catalog):
             raise ValueError("No eligible subscription model is available for this task")
         option = catalog.get(model)
-        # Live dispatch has provider metadata. Offline fixtures need only the
-        # configured ceiling; they never launch a provider or assert entitlement.
+        # Live dispatch supplies provider metadata; configured levels are used
+        # only until that catalog has been loaded.
         levels = option.efforts if option else (() if desired == "auto" else EFFORTS)
         if not levels:
             effort = "auto"
@@ -102,11 +106,7 @@ class TaskRouter:
             effort = option.default_effort if option else "auto"
         else:
             maximum = (
-                ceiling.effort
-                if brain != "MB"
-                else "medium"
-                if retry or task.startswith("memory-")
-                else self.config.mb.effort
+                ceiling.effort if brain != "MB" else "medium" if retry else self.config.mb.effort
             )
             cap = EFFORTS.index(maximum) if maximum in EFFORTS else EFFORTS.index(desired)
             rank = min(EFFORTS.index(desired), cap)

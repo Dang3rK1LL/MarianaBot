@@ -64,7 +64,6 @@ you want one coordinator for your allowance.
 
 ```bash
 .venv/bin/mariana doctor --data-dir ~/.local/share/marianabot
-.venv/bin/mariana demo --plain --data-dir ~/.local/share/marianabot-demo
 mkdir -p ~/.config/systemd/user ~/.local/bin
 cp deploy/marianabot-terminal.service deploy/marianabot-backup.service \
    deploy/marianabot-backup.timer ~/.config/systemd/user/

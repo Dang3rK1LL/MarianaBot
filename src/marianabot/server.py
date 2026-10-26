@@ -45,7 +45,15 @@ async def recover(directory: Path) -> bool:
             store = Store(directory)
             try:
                 run = store.run(record["run_id"])
-                if not resumable(record, run):
+                if run["status"] == "awaiting_answers" and not run["control"]:
+                    questions = store.guidance(run["id"], run["round"] + 1)
+                    if (
+                        record.get("mode") != "research"
+                        or not questions
+                        or any(row["answer"] is None for row in questions)
+                    ):
+                        return False
+                elif not resumable(record, run):
                     return False
             finally:
                 store.close()

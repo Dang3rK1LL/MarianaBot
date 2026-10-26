@@ -21,7 +21,7 @@ def option(args: list[str], name: str, default: str) -> Path:
 
 
 def is_start(args: list[str]) -> bool:
-    if any(value in args for value in ("--help", "--demo")) or args[:1] == ["demo"]:
+    if "--help" in args:
         return False
     return (
         not args

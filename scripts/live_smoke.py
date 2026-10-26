@@ -32,20 +32,12 @@ class SmokeClient(NativeClient):
 
 async def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--allow-credit-usage",
-        action="store_true",
-        help="Explicitly allow this test when provider usage credits are enabled",
-    )
     parser.add_argument("--provider", choices=("both", "openai", "anthropic"), default="both")
     parser.add_argument("--config", type=Path, default=Path("mariana.toml"))
     args = parser.parse_args()
     config = load_config(args.config)
-    if not config.subscription.overage_disabled and not args.allow_credit_usage:
-        parser.error(
-            "Confirm disabled overage in mariana.toml before live testing. "
-            "Only use --allow-credit-usage if you explicitly intend paid credit usage."
-        )
+    if not config.subscription.overage_disabled:
+        parser.error("Confirm disabled overage in mariana.toml before live validation.")
     config.rb.effort = config.jb.effort = "low"
     config.research.request_timeout_seconds = 120
     os.environ["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = "256"

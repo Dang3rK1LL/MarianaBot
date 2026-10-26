@@ -89,19 +89,16 @@ documents `api_error` and overload failures as transient server errors. An expli
 stream failure is rejected even when the CLI exits with code zero; a later successful
 completion can clear an earlier recovered stream error.
 
-Prompts use a strict evidence size bound after semantic compaction. The compactor
-runs as MB through the normal OpenAI gate, archives source text before summarizing,
-and reuses completed summaries by content identity. Large fields are processed in
-overlapping chunks; small fields remain unchanged. A rolling checkpoint includes
-completed rounds, specialist outputs and answered owner dialogue.
+Prompts use a strict context size bound. Working memory comes from the live
+JB chair's carry-forward notes, without separate summarization calls. Exact owner
+requests, guided answers, feedback, the output contract and pins are protected.
+Oversized evidence uses labeled extracts of archived source text. Protected
+material that cannot fit pauses execution intact. See [memory](memory.md).
 
-Original problems, owner feedback and explicit pins bypass compaction. Generated
-briefs can be summarized. Historical review auto-pins remain archived as inactive;
-the latest review supplies current issues. Exhausted summary validation uses a
-labeled original-text extract. Exhausting the protected context pauses the run instead of
-truncating protected fields. Memory is a fallible
-summary with original archives, not arbitrary retrieval or perfect recall. See
-[memory and compaction](memory.md).
+Guided mode persists distinct per-round questions after a live relevance and
+novelty audit. The worker releases its lock while awaiting answers. The last answer
+continues only an unpaused run, respecting worker ownership and concurrent controls.
+Reviews check actual answer application and requested deliverable coverage.
 
 A separate MB mailbox task answers owner questions during research. It shares the
 OpenAI quota and request-spacing controls, with its own one-call scheduling slot

@@ -1,64 +1,27 @@
-# Research memory and compaction
+# Research memory
 
-Each request is a fresh client conversation with the original problem, owner
-feedback, explicit pins, current work and rolling memory. It does not depend on
-a particular model remembering a previous session.
+Each provider request includes the original owner request, the output contract,
+exact owner feedback, active pins and current working state. Models do not depend
+on remembering a previous conversation. Later explicit owner instructions override
+conflicting older entries. Questions alone do not become constraints.
 
-## Owner contract
+Guided questions and their exact answers are stored separately from summaries.
+Their choices and intended effect accompany the answers. Both teams receive them;
+the chair review records how the current round applied each answered question.
+Owner text is never replaced by an MB acknowledgment or generated paraphrase.
 
-Original problems, current owner messages, answered feedback and explicit `/pin`
-notes stay verbatim. MB acknowledgments cannot replace them. Ordinary chat messages
-on an open run are feedback; `/ask` is for questions. Questions remain context,
-not automatically constraints. Later explicit changes supersede conflicting
-older instructions. Steering applies at round boundaries.
+The live JB chair supplies concise carry-forward notes as part of its ordinary
+review. Completed reviews update rolling memory without a separate summarization
+call. The latest plan and review remain available, and full specialist responses
+stay archived. Oversized context uses labeled excerpts from actual saved text;
+these excerpts are context preparation, not generated research answers.
 
-Generated briefs and plans can be summarized. Historical blockers, dissent and
-requested experiments are not permanently pinned. The latest review supplies
-active issues; every earlier review remains saved. Existing automatic pins are
-retained as inactive records. Explicit owner pins remain active until `/unpin ID`,
-which keeps their archived record.
+`research.memory_chars` defaults to 8,000 and is bounded by the configured context.
+`research.max_context_chars` defaults to 60,000. These are character budgets, not
+provider token-window measurements. If the protected owner material cannot fit,
+execution pauses with the original text intact. No finite context guarantees
+perfect semantic retention. Pin exact facts that must remain immediately available.
 
-The initial problem limit is 100,000 characters. Its original is preserved.
-If the owner contract cannot fit the configured context, the worker pauses with
-all text intact. Reconfigure the context bound or release obsolete explicit pins.
-No finite context offers unlimited verbatim instructions or perfect recall.
-
-## Working memory
-
-Completed rounds and specialist findings enter rolling memory. Chair outputs
-are included once through the saved round. Answered dialogue enters memory even
-when responses finish out of order; exact owner wording also stays in the ledger.
-
-`research.memory_chars` defaults to 8,000, capped at one quarter of the configured
-context bound. Ordinary calls target at most 24,000 evidence characters, with
-space up to `research.max_context_chars` when needed by the owner contract.
-These are character budgets, not exact provider token-window meters. Concise
-output budgets reduce growth before compaction becomes necessary.
-
-Sources are archived before summarization. Content-based identities reuse saved
-summaries across agents and restarts. Long sources use overlapping chunks. MB
-preserves decision-critical facts, uncertainty, numbers, dates, source URLs,
-contradictions and reasons for rejecting alternatives.
-
-## Recovery
-
-Invalid JSON, mismatched source IDs, blank summaries and invented URLs fail
-validation. Bounded retries include correction instructions. Valid oversized
-candidates can be shortened and reused after a restart. Rejected output stays
-in private failed-call history and never becomes memory or exported citations.
-
-If validation or size repair still fails, a bounded extract copies passages from
-the original source. It is labeled as partial, with omissions available in the
-full archive. Research can continue without treating it as exhaustive or verified.
-Owner cancellation and terminal account failures still apply. Originals remain
-intact; a fallback does not offer perfect semantic retention.
-
-Compaction uses MB's efficient model and supported effort, escalating after failed
-validation. It shares OpenAI allowance and the research scheduling gate. `/pause`
-can cancel it, and completed work is reused after resume. No additional API billing
-route is introduced.
-
-`/export` includes `memory.md`, full rounds and dialogue, source/summary records,
-model selections and active/released pins in `history.json`. Arbitrary archived
-passages are not automatically retrieved by models. Pin exact information that
-must remain immediately available. Compaction does not extend the run deadline.
+`/export` includes working memory, full rounds, dialogue, guided answers, output
+statuses, model records and source/excerpt records. Existing summary archives
+remain readable; new runs do not call a standalone memory summarizer.

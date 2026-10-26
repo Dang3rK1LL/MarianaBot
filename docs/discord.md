@@ -169,7 +169,7 @@ to formatted text.
 The feed posts at stage boundaries rather than after every individual agent call.
 It uses saved research output and does not make extra model requests to write
 Discord summaries. Full output remains in
-MarianaBot and its exports. Offline fixtures are clearly marked in card footers.
+MarianaBot and its exports.
 
 `ask` starts an MB reply worker if needed, including for a paused or completed
 run. It does not resume research. `steer` queues a brief change for the next round
@@ -238,7 +238,7 @@ includes pauses and quota waits. Legacy checkpoints without timing use the
 latest available snapshot at collection.
 
 Round-team tokens include the selected round's RB/JB calls and retries. Run totals
-also include MB and context compaction calls. Cache-read/write tokens are shown
+also include MB calls and any historical memory calls. Cache-read/write tokens are shown
 in the detailed usage report and are already included in input totals; they are not added again.
 Usage is reported by the native clients. Unknown allowance or reset times remain
 unknown, and incomplete token totals are labelled partial. Token totals belong
@@ -254,23 +254,20 @@ duplicate notification. Command interaction IDs are recorded before side effects
 so redelivery does not blindly enqueue another paid model request. If a crash
 leaves a command's outcome uncertain, check status before issuing a new command.
 
-The integration has authorization, ordered stage/MB delivery, queue migration,
-restart, SDK-adapter, message-size and worker tests. You can start with offline
-demo research before sharing private material or enabling controls.
-For a local preview without Discord or its SDK:
+## Guided questions and research selection
 
-```text
-mariana discord preview RUN_ID
-```
+Choose Guided mode when creating research in the app or CLI. The channel receives
+question cards before each round. `/mariana questions` shows pending questions;
+`/mariana answer` offers question IDs and short answer choices, with free text
+also accepted. The final saved answer continues an unpaused run. A deliberate
+pause stays paused, and completed or stopped research cannot be answered or resumed.
 
-To preview the card layout with synthetic data and no Discord connection:
+Research ID fields autocomplete with active IDs, a short title and status.
+Completed and stopped research are excluded. When no ID is supplied, the bot
+selects the working or watched open run, or the only open run. If the choice is
+ambiguous, it asks you to select one. `/mariana sessions` lists open research only.
+An explicitly typed completed ID still permits read-only status and recap.
 
-```text
-python scripts/preview_discord.py
-```
-
-Open `.mariana/visual-review/discord-updates.html` locally. This preview does not
-start research or contact model providers.
-With `resvg-py` installed, the script also writes a PNG of the round recap.
-See the [sample recap](assets/discord.png); it uses the current embed builder
-and synthetic data.
+All generated content comes from real provider calls. There are no synthetic
+notification preview generators. `mariana discord preview RUN_ID` renders cards
+from an actual saved research without starting it or contacting model providers.

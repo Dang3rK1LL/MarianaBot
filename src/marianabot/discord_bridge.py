@@ -12,13 +12,14 @@ from marianabot.discord_messages import (
     card_text,
     created_card,
     message_card,
+    question_cards,
     recap_card,
     round_start_card,
     stage_card,
     state_card,
     wait_card,
 )
-from marianabot.presentation import STAGES, research_brief
+from marianabot.presentation import STAGES, research_brief, research_title
 from marianabot.store import Store
 from marianabot.usage_ui import duration, quota_line
 from marianabot.worker import WorkerManager
@@ -63,9 +64,7 @@ def status_text(store: Store, run_id: str, *, now: float | None = None) -> str:
             )
         partial = " · partial" if row.get("incomplete") else ""
         lines.append(f"{label}: {counts[0]} in / {counts[1]} out{partial}")
-        lines.append(
-            quota_line(store.get_limits(provider), demo=bool(run["demo"]), now=now).plain.strip()
-        )
+        lines.append(quota_line(store.get_limits(provider), now=now).plain.strip())
     lines += [
         f"App context budget: {config.research.max_context_chars:,} characters; native token window remaining: unknown",
         f"Saved summary: {memory[0] if memory else 0:,} characters; compactions: {compactions[1]} done / {compactions[0] - compactions[1]} pending",
@@ -125,14 +124,35 @@ class DiscordBridge:
 
     def research_choices(self, current: str) -> list[dict]:
         search = current.strip().lower()
-        return [
+        rows = [
             dict(row)
             for row in self.store.db.execute(
-                "SELECT id,status,SUBSTR(problem,1,65) AS problem FROM runs "
-                "WHERE instr(lower(id),?) OR instr(lower(problem),?) ORDER BY created DESC LIMIT 25",
-                (search, search),
+                "SELECT * FROM runs WHERE demo=0 AND status NOT IN ('complete','stopped') ORDER BY created DESC"
             )
         ]
+        return [
+            dict(id=row["id"], status=row["status"], title=research_title(row))
+            for row in rows
+            if not search
+            or search in (row["id"] + " " + research_title(row) + " " + row["problem"]).lower()
+        ][:25]
+
+    def select_active(self, requested="") -> str:
+        if requested:
+            return requested
+        watched = self.watch()
+        choices = self.research_choices("")
+        active = self.manager.active()
+        for preferred in (
+            active.get("run_id") if active else None,
+            watched["run_id"] if watched else None,
+        ):
+            if preferred and any(row["id"] == preferred for row in choices):
+                return preferred
+        waiting = [row for row in choices if row["status"] == "awaiting_answers"]
+        if len(waiting) == 1:
+            return waiting[0]["id"]
+        return choices[0]["id"] if len(choices) == 1 else ""
 
     def _set_watch(self, run: dict, *, replay=False, clear_pending=True):
         run_id = run["id"]
@@ -181,7 +201,7 @@ class DiscordBridge:
             return
         with self.store.transaction():
             runs = self.store.db.execute(
-                "SELECT rowid AS follow_id,* FROM runs WHERE rowid>(SELECT last_run FROM discord_auto_follow WHERE scope=?) ORDER BY rowid LIMIT 20",
+                "SELECT rowid AS follow_id,* FROM runs WHERE demo=0 AND rowid>(SELECT last_run FROM discord_auto_follow WHERE scope=?) ORDER BY rowid LIMIT 20",
                 (self.scope,),
             ).fetchall()
             for run in runs:
@@ -227,7 +247,17 @@ class DiscordBridge:
         return response
 
     async def command(
-        self, *, guild, channel, user, request_id, action, run_id="", message="", confirm=False
+        self,
+        *,
+        guild,
+        channel,
+        user,
+        request_id,
+        action,
+        run_id="",
+        message="",
+        confirm=False,
+        question_id="",
     ):
         self.config.authorize(guild, channel, user)
         if action not in {
@@ -243,10 +273,12 @@ class DiscordBridge:
             "stop",
             "recap",
             "help",
+            "questions",
+            "answer",
         }:
             raise ValueError("Unknown command.")
         if (
-            action in {"ask", "steer", "pause", "resume", "retry", "stop"}
+            action in {"ask", "steer", "pause", "resume", "retry", "stop", "answer"}
             and not self.config.allow_control
         ):
             raise PermissionError(
@@ -271,12 +303,14 @@ class DiscordBridge:
                     ),
                 )
             try:
-                response = await self._apply(action, run_id, message, confirm)
+                response = await self._apply(
+                    action, run_id, message, confirm, question_id, str(request_id)
+                )
             except (ValueError, OSError) as exc:
                 response = "Could not complete command: " + excerpt(str(exc), 500)
             return self._response(str(request_id), response)
 
-    async def _apply(self, action, run_id, message, confirm):
+    async def _apply(self, action, run_id, message, confirm, question_id="", request_id=""):
         if action == "help":
             return (
                 "/mariana sessions — list research IDs and topics\n"
@@ -288,6 +322,8 @@ class DiscordBridge:
                 "/mariana pause — save progress and cancel active requests\n"
                 "/mariana resume — continue from checkpoints\n"
                 "/mariana retry — retry unanswered MB questions\n"
+                "/mariana questions — show this round's questions\n"
+                "/mariana answer question response — save an answer; the last one continues research\n"
                 "/mariana stop run_id confirm:true — permanently end research\n"
                 "/mariana unwatch — disconnect updates; research continues\n\n"
                 "Use run_id autocomplete to search by ID or topic. With no ID, commands use the watched research.\n"
@@ -299,7 +335,7 @@ class DiscordBridge:
             )
         if action == "sessions":
             rows = self.store.db.execute(
-                "SELECT * FROM runs ORDER BY created DESC LIMIT 12"
+                "SELECT * FROM runs WHERE demo=0 AND status NOT IN ('complete','stopped') ORDER BY created DESC LIMIT 12"
             ).fetchall()
             return (
                 "\n".join(
@@ -322,7 +358,7 @@ class DiscordBridge:
             raise ValueError(
                 "Specify the research ID to stop. Use /mariana sessions or run_id autocomplete."
             )
-        selected = run_id.strip() if run_id else watched["run_id"] if watched else ""
+        selected = self.select_active(run_id.strip())
         if not selected or (action == "watch" and not run_id):
             return "Select research with /mariana sessions, then /mariana watch run_id."
         row = self.store.db.execute(
@@ -335,6 +371,32 @@ class DiscordBridge:
 
         def reply(text):
             return f"Research {run_id}\n{text}"
+
+        if action == "questions":
+            rows = self.store.guidance(run_id, run["round"] + 1, pending=True)
+            if not rows:
+                return reply("No unanswered round questions.")
+            with self.store.db:
+                for index, embed in enumerate(
+                    question_cards(run, {"number": run["round"] + 1, "questions": rows})
+                ):
+                    self._queue(f"requested-questions:{request_id}:{index}", embed)
+            return reply(
+                f"Posting all {len(rows)} pending questions to this channel. "
+                "Use /mariana answer; question IDs and choices autocomplete."
+            )
+        if action == "answer":
+            self.store.answer_guidance(run_id, question_id, message)
+            try:
+                started = await self.manager.continue_guided(run_id)
+            except (ValueError, OSError) as exc:
+                return reply(f"Answer saved. {exc}")
+            pending = len(self.store.guidance(run_id, run["round"] + 1, pending=True))
+            return reply(
+                "Answer saved. Research is continuing."
+                if started
+                else f"Answer saved. {pending} questions remain. An owner pause stays paused."
+            )
 
         if action == "watch":
             with self.store.db:
@@ -463,7 +525,7 @@ class DiscordBridge:
         with self.store.transaction():
             events = self.store.db.execute(
                 "SELECT id,kind,payload,created FROM events WHERE run_id=? AND id>? "
-                "AND kind IN ('round_started','round_complete','research_stage','research_wait') ORDER BY id LIMIT 100",
+                "AND kind IN ('round_started','round_complete','research_stage','research_wait','questions_ready') ORDER BY id LIMIT 100",
                 (run_id, watched["last_event"]),
             ).fetchall()
             messages = self.store.db.execute(
@@ -476,11 +538,15 @@ class DiscordBridge:
             )[:100]
             for _, source, _, event in sources:
                 if source == "message":
-                    self._queue(f"{epoch}:message:{event['id']}", message_card(run, event))
+                    if not event["message_key"].startswith("guidance-"):
+                        self._queue(f"{epoch}:message:{event['id']}", message_card(run, event))
                     watched["last_message"] = event["id"]
                     continue
                 payload = json.loads(event["payload"])
-                if event["kind"] == "round_started":
+                if event["kind"] == "questions_ready":
+                    for index, embed in enumerate(question_cards(run, payload)):
+                        self._queue(f"{epoch}:questions:{payload['number']}:{index}", embed)
+                elif event["kind"] == "round_started":
                     self._queue(
                         f"{epoch}:start:{payload['number']}:{payload['revision']}",
                         round_start_card(run, payload),

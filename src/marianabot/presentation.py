@@ -15,6 +15,9 @@ def sentence(value: str, limit=220) -> str:
 
 
 def research_brief(run: dict) -> str:
+    contract = json.loads(run.get("contract") or "{}")
+    if contract.get("objective"):
+        return sentence(contract["objective"])
     brief = run.get("brief", "")
     for label in ("Research question", "Owner objective", "Objective", "Decision"):
         match = re.search(rf"(?im)^\s*(?:\*\*|#+\s*)?{label}\s*[:：]?\*?\*?\s*([^\n]+)", brief)
@@ -30,6 +33,18 @@ def research_brief(run: dict) -> str:
     ):
         return sentence(problem)
     return "Preparing a concise research brief."
+
+
+def research_title(run: dict) -> str:
+    contract = json.loads(run.get("contract") or "{}")
+    if contract.get("title"):
+        return contract["title"][:60]
+    text = re.sub(
+        r"(?i)^(?:assess|evaluate|research|investigate)\s+(?:whether\s+)?(?:the\s+)?(?:supplied\s+)?(?:concept\s+for\s+)?",
+        "",
+        research_brief(run),
+    )
+    return " ".join(text.split()[:6]).strip(".,;:")
 
 
 def section(plan: str, heading: str) -> str:
@@ -63,6 +78,7 @@ def update_metadata(text: str) -> tuple[str, dict]:
 
 
 STAGES = {
+    "questions": "Round questions",
     "intake": "Preparing brief",
     "research": "Researching",
     "synthesis": "Combining findings",

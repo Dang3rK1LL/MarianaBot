@@ -45,10 +45,8 @@ def window_label(window: dict) -> str:
     }.get(name, name.removeprefix("codex ").replace("_", " ")[:18])
 
 
-def quota_line(data: dict, *, demo=False, now=None) -> Text:
+def quota_line(data: dict, *, now=None) -> Text:
     now = time.time() if now is None else now
-    if demo:
-        return Text("  Offline demo · no subscription usage", style=MUTED)
     windows = data.get("windows", [])
     if not windows:
         line = Text("  Allowance not reported", style=MUTED)
@@ -113,7 +111,6 @@ class UsageStrip(VerticalScroll):
         *,
         scope: str,
         config: Config | None,
-        demo: bool,
         working: bool,
         now=None,
         refresh: dict | None = None,
@@ -168,12 +165,12 @@ class UsageStrip(VerticalScroll):
             )
             quota = self.query_one(f"#limit-{provider}", Static)
             quota_text = (
-                quota_details(limits.get(provider, {}), demo=demo, now=now)
+                quota_details(limits.get(provider, {}), now=now)
                 if wide
-                else quota_line(limits.get(provider, {}), demo=demo, now=now)
+                else quota_line(limits.get(provider, {}), now=now)
             )
             state = (refresh or {}).get(provider)
-            if state and not demo:
+            if state:
                 quota_text.append(
                     " · " + state, style=ATTENTION if state == "refresh failed" else MUTED
                 )
@@ -191,10 +188,10 @@ class UsageStrip(VerticalScroll):
             )
 
 
-def quota_details(data: dict, *, demo=False, now=None) -> Text:
+def quota_details(data: dict, *, now=None) -> Text:
     now = time.time() if now is None else now
-    if demo or not data.get("windows"):
-        return quota_line(data, demo=demo, now=now)
+    if not data.get("windows"):
+        return quota_line(data, now=now)
     text = Text(style=MUTED)
     windows = sorted(
         data["windows"],

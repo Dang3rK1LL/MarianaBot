@@ -50,8 +50,6 @@ def card(run: dict, title: str, description: str, fields: list[tuple], color=BLU
             dict(name=name, value=value, inline=bool(entry[2]) if len(entry) > 2 else False)
         )
     footer = run["id"]
-    if run["demo"]:
-        footer = "Offline demo · fixture data; no model usage · " + footer
     return dict(
         title=clip(title, 180),
         description=prose(description, 240),
@@ -80,7 +78,44 @@ def token_text(row: dict) -> str:
 
 
 def created_card(run: dict) -> dict:
-    return card(run, "Research created", research_brief(run), [])
+    config = json.loads(run["config"])
+    return card(
+        run,
+        "Research created",
+        research_brief(run),
+        [("Mode", config.get("research", {}).get("mode", "automatic"))],
+    )
+
+
+def question_cards(run: dict, payload: dict) -> list[dict]:
+    rows = payload["questions"]
+    result = []
+    for offset in range(0, len(rows), 3):
+        fields = [
+            (
+                row["question_id"],
+                row["question"]
+                + "\n"
+                + "\n".join(f"{i}. {option}" for i, option in enumerate(row["options"], 1)),
+            )
+            for row in rows[offset : offset + 3]
+        ]
+        fields.append(
+            (
+                "Answer",
+                "/mariana answer · select a question and answer choice, or type your answer.",
+            )
+        )
+        result.append(
+            card(
+                run,
+                f"Round {payload['number']} · Quick questions",
+                research_brief(run),
+                fields,
+                BLUE,
+            )
+        )
+    return result
 
 
 def metrics(snapshot: dict) -> list[tuple]:
@@ -132,6 +167,7 @@ def stage_card(run: dict, payload: dict) -> dict:
     agents = payload.get("agents", 0)
     now = {
         "intake": "Preparing the objective and research questions.",
+        "questions": "Preparing and checking this round's steering questions.",
         "synthesis": f"{agents} research proposals saved; RB is combining the findings.",
         "critique": f"{agents} independent JB reviewers are checking the evidence.",
         "verdict": f"{agents} critiques saved; JB is deciding what is resolved and what remains.",
@@ -223,7 +259,14 @@ def state_card(run: dict, snapshot: dict, review: dict | None = None) -> dict:
     if reason == "Codex account/rateLimits/read failed; check login, network and CLI version":
         reason = "Codex's usage check failed before the next model request. This version did not save the server's error detail."
     fields = [("What happened", reason)]
-    if run["status"] == "paused":
+    if run["status"] == "awaiting_answers":
+        fields += [
+            (
+                "Next",
+                "Answer the round questions in MarianaBot or with /mariana answer. The final answer continues the round.",
+            )
+        ]
+    elif run["status"] == "paused":
         fields += [
             ("Stopped at", f"{STAGES[progress['stage']]} · {progress['completed']} rounds saved"),
             ("Continue", "/mariana resume"),
@@ -239,7 +282,7 @@ def state_card(run: dict, snapshot: dict, review: dict | None = None) -> dict:
     fields += metrics(snapshot)
     return card(
         run,
-        f"Research {run['status']} · Round {progress['number']}",
+        f"Research {run['status'].replace('_', ' ')} · Round {progress['number']}",
         research_brief(run),
         fields,
         TEAL if run["status"] == "complete" else AMBER,

@@ -31,6 +31,16 @@ MarkdownH1, MarkdownH2, MarkdownH3 { margin-top: 1; margin-bottom: 1; padding: 0
 Collapsible { background: transparent; padding: 0; margin-top: 1; border: none; }
 CollapsibleTitle { color: #92c9cb; }
 #compose-box { height: auto; padding: 0 2; }
+#guidance-bar { height: 1; margin-bottom: 1; }
+#guidance-pending { width: 1fr; color: #dfba79; }
+#answer-guidance { width: 20; min-width: 20; height: 1; border: none; color: #92c9cb; background: #202932; }
+#guidance-dialog { width: 100; max-width: 94%; height: 90%; padding: 1 2; background: #202932; border: solid #92c9cb; }
+#guidance-dialog VerticalScroll { height: 1fr; }
+.guidance-question { height: auto; margin-top: 1; color: #d9e0e4; }
+.guidance-impact { height: auto; color: #a6afb8; margin-bottom: 1; }
+#guidance-error { height: auto; color: #dfba79; }
+#guidance-actions { height: 3; margin-top: 1; }
+#guidance-actions Button { width: auto; margin-right: 2; }
 #composer { height: 3; border: solid #46545e; padding: 0 1; background: #202932; color: #d9e0e4; }
 #composer:focus { border: solid #92c9cb; }
 #suggestions { display: none; height: auto; max-height: 6; background: #202932; border: none; padding: 0 1; }
@@ -50,7 +60,8 @@ ModalScreen { align: center middle; background: #171d24 80%; }
 #dialog Button { height: 1; border: none; margin-top: 1; background: #202932; color: #92c9cb; }
 #dialog Button:focus { background: #92c9cb; color: #171d24; }
 .dialog-title { color: #d9e0e4; text-style: bold; margin-bottom: 1; }
-#work-dialog { width: 86; max-width: 94%; height: auto; padding: 1 2; background: #202932; border: solid #92c9cb; }
+#work-dialog { width: 86; max-width: 94%; height: 85%; max-height: 34; padding: 1 2; background: #202932; border: solid #92c9cb; }
+#research-options-fields { height: 1fr; }
 #work-explanation, #work-error { height: auto; }
 #work-explanation { color: #a6afb8; }
 #work-folder { margin-top: 1; border: solid #46545e; background: #171d24; }
