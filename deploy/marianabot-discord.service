@@ -17,6 +17,9 @@ Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONUTF8=1
 UMask=0077
 ExecStart=%h/MarianaBot/.venv/bin/python -m marianabot --no-update --service discord --config %h/MarianaBot/discord.toml --data-dir %h/.local/share/marianabot
+# The runtime launcher may exit before its supervisor can clean up. Stop only
+# the bot's tmux session; research workers remain owned by the terminal service.
+ExecStop=-/usr/bin/tmux -L marianabot kill-session -t =mariana-discord
 Restart=on-failure
 RestartSec=30
 TimeoutStopSec=30

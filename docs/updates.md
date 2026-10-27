@@ -53,6 +53,12 @@ to exit, then `/quit` the chat. Stop the optional Discord process as well. Reope
 the **MarianaBot Server** shortcut. Do not close an active research run just to
 install an update unless you want to pause it; leaving it running is supported.
 
+For older VPS installations, copy the current `deploy/marianabot-discord.service`
+to `~/.config/systemd/user/` and run `systemctl --user daemon-reload` once. Its
+explicit stop command closes the bot session even if the runtime launcher exits
+before the supervisor cleans up. Without it, a leftover bot can keep updates
+deferred after the service stops. Research workers stay under the terminal service.
+
 The laptop checkout and VPS checkout update independently. The server shortcut
 checks the local launcher and then the VPS; credentials and research are not
 synchronized between them.
