@@ -7,14 +7,17 @@ responses. Earlier simulated records remain distinguishable and read-only.
 
 ```text
 python -m pip install -e ".[dev,discord]"
-python -m ruff check src scripts
-python -m ruff format --check src scripts
-python -m compileall -q src scripts
+python -m ruff check src scripts tests
+python -m ruff format --check src scripts tests
+python -m compileall -q src scripts tests
+python -m unittest discover -s tests -v
 ```
 
 CI runs these checks on Windows and Ubuntu with Python 3.11, 3.13 and 3.14,
-plus imports of the CLI, guided schemas and Discord adapter. Static checks do
-not validate provider behavior. CI never runs model prompts or synthetic research.
+plus imports of the CLI, guided schemas and Discord adapter. Offline tests exercise
+question checkpoints, owner controls, context retention and stopping rules in
+temporary stores. They make no provider calls and do not establish research quality.
+CI never runs model prompts or produces research outputs.
 
 ## Live checks
 

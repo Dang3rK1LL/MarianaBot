@@ -67,7 +67,7 @@ choices. MB has its own lightweight selection. Fable is excluded. Saved choices
 affect new runs; current/last selections are shown in the fullscreen sidebar.
 
 
-Older research is automatically summarized using MB's allowance. The current
+Working memory comes from the live review without extra summarization calls. The current
 owner problem, feedback and explicit pins stay verbatim; historical objections
 remain archived, while the latest review supplies current issues.
 Use `/memory` to inspect this and `/export` for `memory.md` and the source archive.

@@ -18,7 +18,8 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: python -m pip install -e ".[dev,discord]"
-      - run: python -m ruff check src scripts
-      - run: python -m ruff format --check src scripts
-      - run: python -m compileall -q src scripts
+      - run: python -m ruff check src scripts tests
+      - run: python -m ruff format --check src scripts tests
+      - run: python -m compileall -q src scripts tests
+      - run: python -m unittest discover -s tests -v
       - run: python -c "from marianabot.cli import app; from marianabot.guidance import Intake, Questions; from marianabot.discord_bot import ResearchCommands"

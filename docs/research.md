@@ -16,8 +16,12 @@ Automatic mode researches independently. Guided mode asks up to the selected
 question count before each round (default three, maximum ten). Questions address
 missing owner facts or decisions that change the upcoming work. They must be
 short, easily answered, mutually distinct and different from earlier rounds.
+A round may ask zero questions when existing answers and online evidence are
+sufficient; the independent audit must approve that choice before work continues.
 A live independent audit checks relevance, novelty and already-known information.
-Rejected batches are regenerated within the configured retry limit.
+Rejected batches are regenerated within the configured retry limit. Resuming after
+exhausted retries makes fresh attempts with the last audit's feedback; it does not
+replay the same rejected batches. Changed owner context invalidates unused batches.
 
 Questions and answers persist across restarts. Answer all pending questions in the
 app, with `/answer QUESTION_ID text`, or through Discord. No answer is selected
@@ -58,7 +62,9 @@ the same decision, no material change and no unresolved blockers can finish with
 explicit evidence limitations. This avoids chasing a score after the useful
 conclusion stabilizes. Each requested output needs a status; completed items need
 a quotation present in the plan. Creative outputs cannot simply be declared
-impossible because commercial evidence is missing.
+impossible because commercial evidence is missing. Partial requested outputs block
+all early completion paths, including approval and evidence plateaus. Unverifiable
+external facts may remain explicit limitations; creative drafts must be supplied.
 
 Supported approval, exhausted useful online checks and round/time limits remain
 stop conditions. Research can still pause for owner controls, access failures,

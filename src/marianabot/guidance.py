@@ -39,7 +39,7 @@ class Question(StrictModel):
 
 
 class Questions(StrictModel):
-    questions: list[Question] = Field(min_length=1, max_length=10)
+    questions: list[Question] = Field(max_length=10)
 
 
 class QuestionAudit(StrictModel):
@@ -56,6 +56,10 @@ including paraphrases and differently named topic keys. Reject questions whose a
 are already supplied, generic repetitive priority questions, leading questions, compound
 questions, research assignments or irrelevant new directions. Each must be easy to answer
 and materially change this round. Return only JSON matching the supplied audit schema.
+An empty question list is valid when no missing owner fact is needed for this round:
+set all four checks true in that case. Reject an empty list only when a specific
+unanswered owner fact is necessary, and identify that fact in corrections. Do not infer
+acceptance of an hourly income from an accepted price; these are different tradeoffs.
 """
 
 
@@ -100,8 +104,12 @@ and numerical scenarios as calculation. Creative drafts can be conditional, not 
 
 QUESTION_PROMPT = """ROUND_QUESTIONS: Return JSON matching the supplied schema. Ask a few short,
 easily answered questions that will materially change THIS round's work on the owner's
-original request. Ask no more than question_limit (absolute maximum ten). Use 2–5 short
-choices, including an honest 'Not sure' choice when relevant; free-text answers are allowed.
+original request. Ask no more than question_limit (absolute maximum ten).
+Return an empty questions list when the next work can proceed from existing answers
+and online evidence. The limit is a maximum, not a quota. Do not manufacture questions
+or request permission for ordinary research decisions just to populate this list.
+Use 2–5 short choices, including an honest 'Not sure' choice when relevant;
+free-text answers are allowed.
 Each question must cover a different decision or missing owner fact. Never repeat a topic,
 paraphrase a prior question, ask for already supplied information, or ask two versions of
 the same question. Read all prior questions AND their answers before proposing anything.

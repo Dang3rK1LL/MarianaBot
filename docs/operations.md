@@ -53,6 +53,8 @@ and included in exported reports.
 The chat interface starts an MB-only worker for questions on paused or finished
 runs. Shell `ask` only queues a question; open that session in chat and use
 `/retry` if no research worker is active.
+MB-only replies require the OpenAI subscription login, but do not require Claude
+authentication or availability of the run's research ceiling model.
 Research continues after legacy human-evidence verdicts. Online evidence gaps
 remain limitations; an exhausted online-evidence plateau completes the run.
 Ordinary chat text is feedback; use /ask for a question without steering.

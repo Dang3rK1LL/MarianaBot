@@ -516,6 +516,26 @@ class Store:
             for row in self.db.execute(query + " ORDER BY number,created,question_id", args)
         ]
 
+    def next_guidance_attempt(self, run_id: str, audit_prefix: str) -> int:
+        """Skip rejected audits on resume, retaining successful and interrupted checkpoints."""
+        attempt = 0
+        for row in self.db.execute(
+            "SELECT task,result FROM calls WHERE run_id=? AND state='done' AND substr(task,1,?)=?",
+            (run_id, len(audit_prefix), audit_prefix),
+        ):
+            audit = json.loads(row["result"]).get("parsed", {})
+            if not all(
+                audit.get(key)
+                for key in (
+                    "distinct_topics",
+                    "new_information",
+                    "easy_to_answer",
+                    "relevant_to_round",
+                )
+            ):
+                attempt = max(attempt, int(row["task"][len(audit_prefix) :]) + 1)
+        return attempt
+
     def save_guidance(self, run_id: str, number: int, questions: list[dict]):
         from marianabot.guidance import validate_questions
 

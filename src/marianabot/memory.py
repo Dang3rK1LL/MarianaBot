@@ -14,6 +14,11 @@ PROTECTED = {
     "owner_feedback",
     "protected_notes",
     "research_contract",
+    "current_round_answers",
+    "prior_questions",
+    "proposed_questions",
+    "audit_feedback",
+    "plan",
 }
 
 
@@ -54,27 +59,48 @@ class Compactor:
             )
         return result
 
+    def pack_value(self, value, target: int, label: str):
+        """Keep each specialist's contribution and preserve structured context types."""
+        if size(value) <= target:
+            return value
+        if isinstance(value, str):
+            return self.pack(value, target, label)
+        if isinstance(value, (list, dict)):
+            items = list(enumerate(value)) if isinstance(value, list) else list(value.items())
+            packed = [None] * len(items) if isinstance(value, list) else {}
+            overhead = (
+                2 + max(0, len(items) - 1) * 2
+                if isinstance(value, list)
+                else size(dict.fromkeys(value)) - len(items) * 4
+            )
+            remaining = target - overhead
+            for index, (key, item) in enumerate(sorted(items, key=lambda pair: size(pair[1]))):
+                share = remaining // (len(items) - index)
+                packed[key] = self.pack_value(item, share, f"{label}[{key}]")
+                remaining -= size(packed[key])
+            if size(packed) <= target:
+                return packed
+        raise ClientError(
+            "Required research context cannot fit safely; full sources remain archived"
+        )
+
     async def prepare(self, parts: dict, limit: int) -> dict:
         if size(parts) <= limit:
             return parts
         protected = {key: value for key, value in parts.items() if key in PROTECTED}
         remaining = limit - size(protected) - 512
         flexible = sorted(
-            [
-                (key, value if isinstance(value, str) else encoded(value))
-                for key, value in parts.items()
-                if key not in PROTECTED
-            ],
-            key=lambda item: len(encoded(item[1])),
+            [(key, value) for key, value in parts.items() if key not in PROTECTED],
+            key=lambda item: size(item[1]),
         )
         if remaining < max(512, len(flexible) * 160):
             raise ClientError(
-                "Owner instructions exceed the context limit; nothing was discarded. Increase research.max_context_chars before resuming."
+                "Required owner/review context exceeds the context limit; nothing was discarded. Increase research.max_context_chars before resuming."
             )
         result = dict(protected)
-        for index, (key, text) in enumerate(flexible):
+        for index, (key, value) in enumerate(flexible):
             share = max(128, remaining // (len(flexible) - index) - len(key) - 16)
-            packed = self.pack(text, share, key)
+            packed = self.pack_value(value, share, key)
             result[key] = packed
             remaining -= len(encoded(packed)) + len(key) + 8
         if size(result) > limit:

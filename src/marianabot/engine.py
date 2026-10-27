@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import hashlib
 import json
 import random
 import time
@@ -50,13 +51,42 @@ class Halt(Exception):
         self.status = status
 
 
-def stop_reason(rounds: list[dict], config: Config) -> str | None:
+def deliverables_ready(review: dict, contract: dict) -> bool:
+    """Evidence limitations can remain; unfinished requested work cannot count as done."""
+    statuses = review.get("deliverables", {})
+    if any(status not in ("complete", "blocked", "unverifiable") for status in statuses.values()):
+        return False
+    return all(
+        statuses.get(item["id"])
+        in (
+            ("complete",)
+            if item.get("kind") == "creative"
+            else ("complete", "blocked", "unverifiable")
+        )
+        for item in contract.get("deliverables", [])
+    )
+
+
+def stop_reason(rounds: list[dict], config: Config, contract: dict | None = None) -> str | None:
     if not rounds:
         return None
     current = rounds[-1]
     review = current["review"]
     same_revision = [r for r in rounds if r["revision"] == current["revision"]]
     cfg = config.research
+    contract = contract or {}
+
+    def aligned(review):
+        return all(
+            review.get(key, True)
+            for key in (
+                "scope_aligned",
+                "owner_constraints_preserved",
+                "online_only",
+                "guidance_respected",
+            )
+        ) and deliverables_ready(review, contract)
+
     if len(same_revision) < cfg.min_rounds:
         return None
     stable = same_revision[-cfg.stable_rounds :]
@@ -68,15 +98,7 @@ def stop_reason(rounds: list[dict], config: Config) -> str | None:
             == review.get("decision", "").strip().casefold()
             and row["review"].get("deliverables")
             and not row["review"].get("blocking_issues")
-            and all(
-                row["review"].get(key, True)
-                for key in (
-                    "scope_aligned",
-                    "owner_constraints_preserved",
-                    "online_only",
-                    "guidance_respected",
-                )
-            )
+            and aligned(row["review"])
             for row in stable
         )
         and review.get("decision")
@@ -87,10 +109,7 @@ def stop_reason(rounds: list[dict], config: Config) -> str | None:
     if len(streak) == cfg.approval_streak and all(
         r["review"]["verdict"] == "approve"
         and r["review"].get("foundation_ready", False)
-        and all(
-            r["review"].get(key, True)
-            for key in ("scope_aligned", "owner_constraints_preserved", "online_only")
-        )
+        and aligned(r["review"])
         and not r["review"]["blocking_issues"]
         and r["review"]["score"] >= cfg.quality_threshold
         for r in streak
@@ -100,6 +119,8 @@ def stop_reason(rounds: list[dict], config: Config) -> str | None:
     if (
         len(recent) == cfg.plateau_rounds
         and review.get("foundation_ready", False)
+        and aligned(review)
+        and (not contract.get("deliverables") or review.get("decision_ready"))
         and not review.get("online_checks")
         and max(r["review"]["score"] for r in recent[1:]) <= recent[0]["review"]["score"]
     ):
@@ -206,12 +227,15 @@ class Engine:
                 "Disable provider extra usage/automatic credit purchases, then set subscription.overage_disabled=true before creating a live run",
             )
         account = await self.refresh_account(include_models=True)
+        self.router.set_catalog("rb", parse_models("rb", account["model_details"]))
+        if self.messages_only:
+            self.emit("Verified OpenAI subscription authentication for MB replies")
+            return
         if self.config.rb.model not in account["models"]:
             raise Halt(
                 "paused",
                 f"Codex does not list requested model {self.config.rb.model}; no substitute selected",
             )
-        self.router.set_catalog("rb", parse_models("rb", account["model_details"]))
         await claude_account(self.config, self.account.cwd)
         self.router.set_catalog(
             "jb", parse_models("jb", await claude_models(self.config, self.account.cwd))
@@ -268,9 +292,10 @@ class Engine:
 
         while True:
             await asyncio.sleep(interval)
-            await asyncio.gather(
-                refresh(self.refresh_account), refresh(self.refresh_claude_account)
-            )
+            checks = [refresh(self.refresh_account)]
+            if not self.messages_only:
+                checks.append(refresh(self.refresh_claude_account))
+            await asyncio.gather(*checks)
 
     async def refresh_claude_account(self):
         async with self.claude_account_lock:
@@ -601,8 +626,23 @@ class Engine:
                 "previous_review": history[-1]["review"] if history else {},
                 "question_limit": self.config.research.questions_per_round,
             }
+            # Include exact owner changes in checkpoint identity. A rejected batch
+            # must not be replayed forever, or survive steering under a new brief.
+            context_key = hashlib.sha256(
+                json.dumps(
+                    data | self.memory.context(), sort_keys=True, ensure_ascii=False
+                ).encode()
+            ).hexdigest()[:16]
+            prefix = f"v2-{number}-revision-{run['revision']}-{context_key}-attempt-"
+            audit_prefix = "guidance-audit-" + prefix
+            first_attempt = self.store.next_guidance_attempt(self.run_id, audit_prefix)
             feedback = []
-            for attempt in range(self.config.research.max_retries + 1):
+            if first_attempt:
+                previous = self.store.cached(self.run_id, audit_prefix + str(first_attempt - 1))
+                feedback = previous["parsed"]["corrections"] if previous else []
+            for attempt in range(
+                first_attempt, first_attempt + self.config.research.max_retries + 1
+            ):
 
                 def validate(result):
                     validate_questions(
@@ -611,7 +651,7 @@ class Engine:
 
                 proposed = await self.call(
                     "MB",
-                    f"mb-guidance-{number}-attempt-{attempt}",
+                    "mb-guidance-" + prefix + str(attempt),
                     QUESTION_PROMPT,
                     data | {"audit_feedback": feedback},
                     schema=Questions,
@@ -619,7 +659,7 @@ class Engine:
                 )
                 audit = await self.call(
                     "JB",
-                    f"guidance-audit-{number}-attempt-{attempt}",
+                    audit_prefix + str(attempt),
                     QUESTION_AUDIT,
                     data | {"proposed_questions": proposed["parsed"]["questions"]},
                     schema=QuestionAudit,
@@ -634,7 +674,18 @@ class Engine:
                         "relevant_to_round",
                     )
                 ):
-                    self.store.save_guidance(self.run_id, number, proposed["parsed"]["questions"])
+                    questions = proposed["parsed"]["questions"]
+                    if questions:
+                        self.store.save_guidance(self.run_id, number, questions)
+                    else:
+                        self.store.message(
+                            self.run_id,
+                            f"guidance-empty-{number}-{context_key}",
+                            "MB",
+                            f"Round {number} · No questions needed",
+                            "The question audit found no missing owner facts needed for this "
+                            "round. Continuing with your saved answers and online research.",
+                        )
                     break
                 feedback = judged["corrections"]
             else:
@@ -671,7 +722,7 @@ class Engine:
             run = self.store.run(self.run_id)
             history = self.store.rounds(self.run_id)
             if history and history[-1]["revision"] == run["revision"]:
-                reason = stop_reason(history, self.config)
+                reason = stop_reason(history, self.config, json.loads(run.get("contract") or "{}"))
                 if reason:
                     raise Halt("complete", reason)
             number = run["round"] + 1

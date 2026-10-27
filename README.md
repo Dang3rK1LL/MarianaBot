@@ -76,7 +76,7 @@ know, and what decision the research should help you make.
 
 Before starting each research run, choose a work folder and **Automatic** or
 **Guided** mode. Automatic runs independently. Guided asks a few short questions
-before each round; answer in the app or Discord. Three questions is the default,
+before each round when owner input is needed; answer in the app or Discord. Three questions is the default maximum,
 with a maximum of ten. Topics must be distinct from earlier rounds. Exact answers
 steer both teams and the review checks how they affected the deliverables.
 
@@ -200,12 +200,13 @@ Laptop and VPS installations update independently. See [startup updates](docs/up
 
 ```text
 python -m pip install -e ".[dev,discord]"
-python -m ruff check src scripts
-python -m ruff format --check src scripts
-python -m compileall -q src scripts
+python -m ruff check src scripts tests
+python -m ruff format --check src scripts tests
+python -m compileall -q src scripts tests
+python -m unittest discover -s tests -v
 ```
 
-CI runs static checks only. Behavioral validation uses explicit live provider
+CI runs static checks and offline control regressions. Provider validation uses explicit live provider
 calls and consumes subscription allowance; it never runs automatically in CI or
 on startup. See [validation](docs/testing.md) and [architecture](docs/architecture.md).
 Live checks are evidence about the calls exercised, not a guarantee of future

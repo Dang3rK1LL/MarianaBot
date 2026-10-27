@@ -14,7 +14,10 @@ The live JB chair supplies concise carry-forward notes as part of its ordinary
 review. Completed reviews update rolling memory without a separate summarization
 call. The latest plan and review remain available, and full specialist responses
 stay archived. Oversized context uses labeled excerpts from actual saved text;
-these excerpts are context preparation, not generated research answers.
+these excerpts are context preparation, not generated research answers. Each
+specialist retains a separate excerpt, so a long first response cannot displace
+the other specialists. Review subjects, proposed questions, audit corrections and
+current owner answers remain intact rather than being excerpted.
 
 `research.memory_chars` defaults to 8,000 and is bounded by the configured context.
 `research.max_context_chars` defaults to 60,000. These are character budgets, not

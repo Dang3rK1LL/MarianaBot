@@ -90,7 +90,7 @@ so the original environment has the matching dependencies.
 
 ## Verification
 
-CI checks syntax, imports and formatting. Deployment should also check the active
+CI checks syntax, imports, formatting and offline control regressions. Deployment should also check the active
 version, service health and preservation of existing research records. It does
 not generate sample research. See [validation](testing.md) for explicit live
 provider checks that consume subscription allowance.
